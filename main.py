@@ -39,15 +39,7 @@ class RegionRatioApp:
         count_label.grid(row=3, column=0, sticky="w", pady=(8, 0))
 
     def open_selector(self):
-        selector = tk.Toplevel(self.root)
-        selector.attributes("-fullscreen", True)
-        selector.attributes("-alpha", 0.3)
-        selector.configure(background="black")
-        selector.attributes("-topmost", True)
-        selector.grab_set()
-
-        canvas = tk.Canvas(selector, cursor="cross", bg="black", highlightthickness=0)
-        canvas.pack(fill="both", expand=True)
+        selector, canvas = self.create_selector_window(cursor="cross")
 
         start = {"x": 0, "y": 0}
         rect_id = {"id": None}
@@ -88,15 +80,7 @@ class RegionRatioApp:
         canvas.bind("<ButtonRelease-1>", on_release)
 
     def open_pixel_selector(self):
-        selector = tk.Toplevel(self.root)
-        selector.attributes("-fullscreen", True)
-        selector.attributes("-alpha", 0.3)
-        selector.configure(background="black")
-        selector.attributes("-topmost", True)
-        selector.grab_set()
-
-        canvas = tk.Canvas(selector, cursor="tcross", bg="black", highlightthickness=0)
-        canvas.pack(fill="both", expand=True)
+        selector, canvas = self.create_selector_window(cursor="tcross")
 
         def on_click(event):
             from PIL import ImageGrab
@@ -105,16 +89,36 @@ class RegionRatioApp:
             offset_y = selector.winfo_rooty()
             screen_x = event.x + offset_x
             screen_y = event.y + offset_y
-            pixel = ImageGrab.grab(bbox=(screen_x, screen_y, screen_x + 1, screen_y + 1)).getpixel((0, 0))
-            self.selected_color = normalize_pixel(pixel)
-            color_hex = "#%02X%02X%02X" % self.selected_color
-            self.color_var.set(f"선택된 색상: {color_hex}")
-            self.status_var.set("선택된 색상 픽셀 수를 측정 중입니다.")
-            self.start_updates()
-            selector.grab_release()
-            selector.destroy()
+            selector.withdraw()
+
+            def capture_pixel():
+                pixel = ImageGrab.grab(
+                    bbox=(screen_x, screen_y, screen_x + 1, screen_y + 1)
+                ).getpixel((0, 0))
+                self.selected_color = normalize_pixel(pixel)
+                color_hex = "#%02X%02X%02X" % self.selected_color
+                self.color_var.set(f"선택된 색상: {color_hex}")
+                self.status_var.set("선택된 색상 픽셀 수를 측정 중입니다.")
+                self.start_updates()
+                selector.grab_release()
+                selector.destroy()
+
+            selector.after(10, capture_pixel)
 
         canvas.bind("<ButtonPress-1>", on_click)
+
+    def create_selector_window(self, cursor):
+        selector = tk.Toplevel(self.root)
+        selector.attributes("-fullscreen", True)
+        selector.attributes("-topmost", True)
+        selector.attributes("-alpha", 0.01)
+        selector.grab_set()
+
+        selector.configure(background="black")
+        canvas = tk.Canvas(selector, cursor=cursor, bg="black", highlightthickness=0)
+        canvas.pack(fill="both", expand=True)
+
+        return selector, canvas
 
     def start_updates(self):
         if self.update_job is not None:
