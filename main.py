@@ -13,10 +13,15 @@ class RegionRatioApp:
         self.region = None
         self.update_job = None
         self.selected_color = None
+        self.hp_pixels = 0
 
         self.status_var = tk.StringVar(value="영역과 픽셀을 선택하세요.")
         self.color_var = tk.StringVar(value="선택된 색상: 없음")
-        self.color_count_var = tk.StringVar(value="선택한 색상 픽셀 수: 0")
+        self.hp_pixel_var = tk.StringVar(value="hp픽셀: 0")
+        self.health_percent_var = tk.StringVar(value="체력 %: 0")
+        self.current_health_var = tk.StringVar(value="현재 체력: 0")
+        self.max_health_var = tk.StringVar(value="100")
+        self.color_input_var = tk.StringVar(value="#")
 
         main_frame = ttk.Frame(root, padding=16)
         main_frame.grid(sticky="nsew")
@@ -35,8 +40,31 @@ class RegionRatioApp:
         color_label = ttk.Label(main_frame, textvariable=self.color_var)
         color_label.grid(row=2, column=0, sticky="w", pady=(8, 0))
 
-        count_label = ttk.Label(main_frame, textvariable=self.color_count_var, font=("Segoe UI", 14, "bold"))
-        count_label.grid(row=3, column=0, sticky="w", pady=(8, 0))
+        color_input_label = ttk.Label(main_frame, text="색상 코드 입력(#RRGGBB):")
+        color_input_label.grid(row=3, column=0, sticky="w", pady=(8, 0))
+
+        color_input_entry = ttk.Entry(main_frame, textvariable=self.color_input_var, width=12)
+        color_input_entry.grid(row=3, column=1, sticky="w", padx=(8, 0))
+
+        color_input_button = ttk.Button(main_frame, text="적용", command=self.apply_color_input)
+        color_input_button.grid(row=3, column=2, sticky="w", padx=(8, 0))
+
+        hp_pixel_label = ttk.Label(main_frame, textvariable=self.hp_pixel_var, font=("Segoe UI", 14, "bold"))
+        hp_pixel_label.grid(row=4, column=0, sticky="w", pady=(8, 0))
+
+        max_health_label = ttk.Label(main_frame, text="최대 체력:")
+        max_health_label.grid(row=5, column=0, sticky="w", pady=(8, 0))
+
+        max_health_entry = ttk.Entry(main_frame, textvariable=self.max_health_var, width=10)
+        max_health_entry.grid(row=5, column=1, sticky="w", padx=(8, 0))
+
+        current_health_label = ttk.Label(main_frame, textvariable=self.current_health_var)
+        current_health_label.grid(row=6, column=0, sticky="w", pady=(4, 0))
+
+        health_percent_label = ttk.Label(main_frame, textvariable=self.health_percent_var, font=("Segoe UI", 12, "bold"))
+        health_percent_label.grid(row=7, column=0, sticky="w", pady=(12, 0))
+
+        self.max_health_var.trace_add("write", self.on_max_health_change)
 
     def open_selector(self):
         selector, canvas = self.create_selector_window(cursor="cross")
@@ -120,10 +148,48 @@ class RegionRatioApp:
 
         return selector, canvas
 
+    def parse_color_input(self, value):
+        value = value.strip()
+        if not value:
+            return None
+        if value.startswith("#"):
+            value = value[1:]
+        if len(value) != 6:
+            return None
+        try:
+            return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+        except ValueError:
+            return None
+
+    def apply_color_input(self):
+        color = self.parse_color_input(self.color_input_var.get())
+        if color is None:
+            self.status_var.set("색상 코드를 다시 확인하세요.")
+            return
+        self.selected_color = normalize_pixel(color)
+        color_hex = "#%02X%02X%02X" % self.selected_color
+        self.color_var.set(f"선택된 색상: {color_hex}")
+        self.status_var.set("선택된 색상 픽셀 수를 측정 중입니다.")
+        self.start_updates()
+
+    def on_max_health_change(self, *args):
+        self.update_health_display()
+
     def start_updates(self):
         if self.update_job is not None:
             self.root.after_cancel(self.update_job)
         self.update_job = self.root.after(250, self.update_ratio)
+
+    def update_health_display(self):
+        health_percent = (100 / 82) * ((self.hp_pixels / 2) + 3)
+        rounded_percent = round(health_percent)
+        self.health_percent_var.set(f"체력 %: {rounded_percent}")
+        try:
+            max_health = float(self.max_health_var.get())
+        except ValueError:
+            max_health = 0
+        current_health = round(max_health * (health_percent / 100))
+        self.current_health_var.set(f"현재 체력: {current_health}")
 
     def update_ratio(self):
         if self.region is None:
@@ -134,7 +200,9 @@ class RegionRatioApp:
 
         image = ImageGrab.grab(bbox=self.region)
         if self.selected_color is None:
-            self.color_count_var.set("선택한 색상 픽셀 수: 0")
+            self.hp_pixels = 0
+            self.hp_pixel_var.set("hp픽셀: 0")
+            self.update_health_display()
             self.update_job = self.root.after(250, self.update_ratio)
             return
 
@@ -144,7 +212,9 @@ class RegionRatioApp:
             if normalize_pixel(pixel) == self.selected_color:
                 match_count += 1
 
-        self.color_count_var.set(f"선택한 색상 픽셀 수: {match_count}")
+        self.hp_pixels = match_count
+        self.hp_pixel_var.set(f"hp픽셀: {match_count}")
+        self.update_health_display()
         self.update_job = self.root.after(250, self.update_ratio)
 
 
