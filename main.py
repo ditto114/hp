@@ -182,8 +182,8 @@ class RegionRatioApp:
 
     def update_health_display(self):
         health_percent = (100 / 82) * ((self.hp_pixels / 2) + 3)
-        rounded_percent = round(health_percent)
-        self.health_percent_var.set(f"체력 %: {rounded_percent}")
+        rounded_percent = round(health_percent, 2)
+        self.health_percent_var.set(f"체력 %: {rounded_percent:.2f}")
         try:
             max_health = float(self.max_health_var.get())
         except ValueError:
