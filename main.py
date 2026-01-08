@@ -1,9 +1,12 @@
+import json
+import os
 import tkinter as tk
 from tkinter import ttk
 import random
 import time
 
 import pyautogui
+from pynput import keyboard
 
 def normalize_pixel(pixel):
     return tuple(pixel[:3])
@@ -18,6 +21,10 @@ class RegionRatioApp:
         self.selected_color = None
         self.hp_pixels = 0
         self.warning_start_time = None
+        self.keyboard_listener = None
+        self.key_timers = []
+        self.timer_capture_window = None
+        self.settings_path = os.path.join(os.path.dirname(__file__), "settings.json")
 
         self.status_var = tk.StringVar(value="영역과 픽셀을 선택하세요.")
         self.color_var = tk.StringVar(value="선택된 색상: 없음")
@@ -33,6 +40,8 @@ class RegionRatioApp:
         self.warning_shortcut_var = tk.StringVar(value="")
         self.warning_action_triggered = False
         self.warning_key_job = None
+        self.timer_key_var = tk.StringVar(value="")
+        self.timer_seconds_var = tk.StringVar(value="5")
 
         main_frame = ttk.Frame(root, padding=16)
         main_frame.grid(sticky="nsew")
@@ -122,8 +131,42 @@ class RegionRatioApp:
         warning_duration_label = ttk.Label(main_frame, textvariable=self.warning_duration_var)
         warning_duration_label.grid(row=12, column=0, sticky="w", pady=(4, 0))
 
+        separator = ttk.Separator(main_frame, orient="horizontal")
+        separator.grid(row=13, column=0, columnspan=3, sticky="ew", pady=12)
+
+        timer_title = ttk.Label(main_frame, text="키 타이머", font=("Segoe UI", 12, "bold"))
+        timer_title.grid(row=14, column=0, sticky="w")
+
+        timer_key_label = ttk.Label(main_frame, text="키 입력:")
+        timer_key_label.grid(row=15, column=0, sticky="w", pady=(8, 0))
+
+        timer_key_entry = ttk.Entry(main_frame, textvariable=self.timer_key_var, width=12, state="readonly")
+        timer_key_entry.grid(row=15, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        timer_key_button = ttk.Button(main_frame, text="키 입력", command=self.capture_timer_key)
+        timer_key_button.grid(row=15, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        timer_seconds_label = ttk.Label(main_frame, text="시간(초):")
+        timer_seconds_label.grid(row=16, column=0, sticky="w", pady=(8, 0))
+
+        timer_seconds_entry = ttk.Entry(main_frame, textvariable=self.timer_seconds_var, width=10)
+        timer_seconds_entry.grid(row=16, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        timer_add_button = ttk.Button(main_frame, text="타이머 추가", command=self.add_key_timer)
+        timer_add_button.grid(row=16, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        self.timer_list_frame = ttk.Frame(main_frame)
+        self.timer_list_frame.grid(row=17, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+
         self.max_health_var.trace_add("write", self.on_max_health_change)
         self.warning_threshold_var.trace_add("write", self.on_warning_threshold_change)
+        self.warning_trigger_duration_var.trace_add("write", self.on_warning_trigger_duration_change)
+        self.warning_shortcut_var.trace_add("write", self.on_warning_shortcut_change)
+        self.timer_seconds_var.trace_add("write", self.on_timer_seconds_change)
+
+        self.load_settings()
+        self.start_keyboard_listener()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def open_selector(self):
         selector, canvas = self.create_selector_window(cursor="cross")
@@ -159,6 +202,7 @@ class RegionRatioApp:
                 self.region = (x1 + offset_x, y1 + offset_y, x2 + offset_x, y2 + offset_y)
                 self.status_var.set("선택된 영역에서 색상 픽셀 수를 측정 중입니다.")
                 self.start_updates()
+                self.save_settings()
             selector.grab_release()
             selector.destroy()
 
@@ -187,6 +231,7 @@ class RegionRatioApp:
                 self.color_var.set(f"선택된 색상: {color_hex}")
                 self.status_var.set("선택된 색상 픽셀 수를 측정 중입니다.")
                 self.start_updates()
+                self.save_settings()
                 selector.grab_release()
                 selector.destroy()
 
@@ -230,12 +275,24 @@ class RegionRatioApp:
         self.color_var.set(f"선택된 색상: {color_hex}")
         self.status_var.set("선택된 색상 픽셀 수를 측정 중입니다.")
         self.start_updates()
+        self.save_settings()
 
     def on_max_health_change(self, *args):
         self.update_health_display()
+        self.save_settings()
 
     def on_warning_threshold_change(self, *args):
         self.update_health_display()
+        self.save_settings()
+
+    def on_warning_trigger_duration_change(self, *args):
+        self.save_settings()
+
+    def on_warning_shortcut_change(self, *args):
+        self.save_settings()
+
+    def on_timer_seconds_change(self, *args):
+        self.save_settings()
 
     def parse_warning_threshold(self):
         value = self.warning_threshold_var.get().strip()
@@ -311,6 +368,210 @@ class RegionRatioApp:
         self.shortcut_capture_window.bind("<KeyPress>", on_key)
         self.shortcut_capture_window.protocol("WM_DELETE_WINDOW", on_close)
         self.shortcut_capture_window.focus_set()
+
+    def capture_timer_key(self):
+        if self.timer_capture_window is not None:
+            self.timer_capture_window.lift()
+            return
+
+        self.timer_capture_window = tk.Toplevel(self.root)
+        self.timer_capture_window.title("키 입력")
+        self.timer_capture_window.attributes("-topmost", True)
+        message = ttk.Label(self.timer_capture_window, text="타이머로 사용할 키를 누르세요.", padding=16)
+        message.pack()
+
+        def on_key(event):
+            key_name = self.normalize_tk_key(event.keysym)
+            if key_name:
+                self.timer_key_var.set(key_name)
+                self.timer_capture_window.destroy()
+                self.timer_capture_window = None
+
+        def on_close():
+            self.timer_capture_window.destroy()
+            self.timer_capture_window = None
+
+        self.timer_capture_window.bind("<KeyPress>", on_key)
+        self.timer_capture_window.protocol("WM_DELETE_WINDOW", on_close)
+        self.timer_capture_window.focus_set()
+
+    def normalize_tk_key(self, keysym):
+        normalized = keysym.lower()
+        special_map = {
+            "space": "space",
+            "return": "enter",
+            "escape": "esc",
+            "backspace": "backspace",
+            "tab": "tab",
+            "delete": "delete"
+        }
+        return special_map.get(normalized, normalized)
+
+    def normalize_global_key(self, key):
+        if isinstance(key, keyboard.KeyCode):
+            if key.char is None:
+                return None
+            return key.char.lower()
+        if isinstance(key, keyboard.Key):
+            return key.name.lower()
+        return None
+
+    def start_keyboard_listener(self):
+        if self.keyboard_listener is not None:
+            return
+        self.keyboard_listener = keyboard.Listener(on_press=self.handle_global_key_press)
+        self.keyboard_listener.daemon = True
+        self.keyboard_listener.start()
+
+    def handle_global_key_press(self, key):
+        key_name = self.normalize_global_key(key)
+        if not key_name:
+            return
+        self.root.after(0, lambda: self.trigger_key_timer(key_name))
+
+    def add_key_timer(self):
+        key_name = self.timer_key_var.get().strip().lower()
+        if not key_name:
+            self.status_var.set("타이머 키를 입력하세요.")
+            return
+        try:
+            duration = int(self.timer_seconds_var.get())
+        except ValueError:
+            self.status_var.set("타이머 시간을 확인하세요.")
+            return
+        duration = max(1, duration)
+
+        timer = self.create_timer_row(key_name, duration)
+        self.key_timers.append(timer)
+        self.timer_key_var.set("")
+        self.save_settings()
+
+    def create_timer_row(self, key_name, duration):
+        row_frame = ttk.Frame(self.timer_list_frame)
+        row_frame.pack(fill="x", pady=4)
+
+        label = ttk.Label(row_frame, text=f"키: {key_name} ({duration}초)")
+        label.pack(side="left")
+
+        remaining_var = tk.StringVar(value=f"남은 시간: {duration}초")
+        remaining_label = ttk.Label(row_frame, textvariable=remaining_var)
+        remaining_label.pack(side="left", padx=12)
+
+        progress = ttk.Progressbar(row_frame, orient="horizontal", length=200, mode="determinate")
+        progress.pack(side="left", padx=8)
+        progress["maximum"] = duration
+        progress["value"] = duration
+
+        delete_button = ttk.Button(row_frame, text="삭제", command=lambda: self.remove_timer_row(timer))
+        delete_button.pack(side="right")
+
+        timer = {
+            "key": key_name,
+            "duration": duration,
+            "remaining": duration,
+            "job": None,
+            "frame": row_frame,
+            "remaining_var": remaining_var,
+            "progress": progress
+        }
+        return timer
+
+    def remove_timer_row(self, timer):
+        if timer["job"] is not None:
+            self.root.after_cancel(timer["job"])
+        timer["frame"].destroy()
+        self.key_timers = [item for item in self.key_timers if item is not timer]
+        self.save_settings()
+
+    def trigger_key_timer(self, key_name):
+        for timer in self.key_timers:
+            if timer["key"] == key_name:
+                self.start_timer(timer)
+
+    def start_timer(self, timer):
+        timer["remaining"] = timer["duration"]
+        timer["progress"]["maximum"] = timer["duration"]
+        timer["progress"]["value"] = timer["duration"]
+        timer["remaining_var"].set(f"남은 시간: {timer['remaining']}초")
+        if timer["job"] is not None:
+            self.root.after_cancel(timer["job"])
+        timer["job"] = self.root.after(1000, lambda: self.tick_timer(timer))
+
+    def tick_timer(self, timer):
+        timer["remaining"] -= 1
+        if timer["remaining"] <= 0:
+            timer["remaining"] = 0
+            timer["progress"]["value"] = 0
+            timer["remaining_var"].set("남은 시간: 0초")
+            timer["job"] = None
+            return
+        timer["progress"]["value"] = timer["remaining"]
+        timer["remaining_var"].set(f"남은 시간: {timer['remaining']}초")
+        timer["job"] = self.root.after(1000, lambda: self.tick_timer(timer))
+
+    def load_settings(self):
+        if not os.path.exists(self.settings_path):
+            return
+        with open(self.settings_path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+
+        self.max_health_var.set(str(data.get("max_health", self.max_health_var.get())))
+        self.warning_threshold_var.set(str(data.get("warning_threshold", self.warning_threshold_var.get())))
+        self.warning_trigger_duration_var.set(str(
+            data.get("warning_trigger_duration", self.warning_trigger_duration_var.get())
+        ))
+        self.warning_shortcut_var.set(data.get("warning_shortcut", self.warning_shortcut_var.get()))
+        self.color_input_var.set(data.get("color_input", self.color_input_var.get()))
+        timer_seconds = data.get("timer_seconds", self.timer_seconds_var.get())
+        self.timer_seconds_var.set(str(timer_seconds))
+
+        region = data.get("region")
+        if region and len(region) == 4:
+            self.region = tuple(region)
+            self.status_var.set("선택된 영역에서 색상 픽셀 수를 측정 중입니다.")
+
+        color_hex = data.get("selected_color")
+        if color_hex:
+            color = self.parse_color_input(color_hex)
+            if color is not None:
+                self.selected_color = normalize_pixel(color)
+                self.color_var.set(f"선택된 색상: {color_hex.upper()}")
+                self.status_var.set("선택된 색상 픽셀 수를 측정 중입니다.")
+
+        timers = data.get("key_timers", [])
+        for timer in timers:
+            key_name = str(timer.get("key", "")).lower()
+            duration = int(timer.get("duration", 0))
+            if key_name and duration > 0:
+                self.key_timers.append(self.create_timer_row(key_name, duration))
+
+        if self.region is not None:
+            self.start_updates()
+
+    def save_settings(self):
+        settings = {
+            "region": list(self.region) if self.region else None,
+            "selected_color": self.color_var.get().replace("선택된 색상: ", "").strip()
+            if self.selected_color else None,
+            "color_input": self.color_input_var.get(),
+            "max_health": self.max_health_var.get(),
+            "warning_threshold": self.warning_threshold_var.get(),
+            "warning_trigger_duration": self.warning_trigger_duration_var.get(),
+            "warning_shortcut": self.warning_shortcut_var.get(),
+            "timer_seconds": self.timer_seconds_var.get(),
+            "key_timers": [
+                {"key": timer["key"], "duration": timer["duration"]}
+                for timer in self.key_timers
+            ]
+        }
+        with open(self.settings_path, "w", encoding="utf-8") as file:
+            json.dump(settings, file, ensure_ascii=False, indent=2)
+
+    def on_close(self):
+        self.save_settings()
+        if self.keyboard_listener is not None:
+            self.keyboard_listener.stop()
+        self.root.destroy()
 
     def schedule_warning_shortcut(self, keys):
         if not keys or self.warning_action_triggered:
