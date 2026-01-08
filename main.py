@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+import time
 
 
 def normalize_pixel(pixel):
@@ -14,6 +15,7 @@ class RegionRatioApp:
         self.update_job = None
         self.selected_color = None
         self.hp_pixels = 0
+        self.warning_start_time = None
 
         self.status_var = tk.StringVar(value="영역과 픽셀을 선택하세요.")
         self.color_var = tk.StringVar(value="선택된 색상: 없음")
@@ -22,11 +24,17 @@ class RegionRatioApp:
         self.current_health_var = tk.StringVar(value="현재 체력: 0")
         self.max_health_var = tk.StringVar(value="100")
         self.color_input_var = tk.StringVar(value="#")
+        self.warning_threshold_var = tk.StringVar(value="30")
+        self.warning_state_var = tk.StringVar(value="경고 상태: 정상")
+        self.warning_duration_var = tk.StringVar(value="경고 지속시간: 0.00초")
 
         main_frame = ttk.Frame(root, padding=16)
         main_frame.grid(sticky="nsew")
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
+
+        style = ttk.Style(root)
+        style.configure("Warning.TLabel", foreground="red")
 
         select_button = ttk.Button(main_frame, text="영역 선택", command=self.open_selector)
         select_button.grid(row=0, column=0, sticky="w")
@@ -58,13 +66,30 @@ class RegionRatioApp:
         max_health_entry = ttk.Entry(main_frame, textvariable=self.max_health_var, width=10)
         max_health_entry.grid(row=5, column=1, sticky="w", padx=(8, 0))
 
-        current_health_label = ttk.Label(main_frame, textvariable=self.current_health_var)
-        current_health_label.grid(row=6, column=0, sticky="w", pady=(4, 0))
+        warning_threshold_label = ttk.Label(main_frame, text="체력 경고 %:")
+        warning_threshold_label.grid(row=6, column=0, sticky="w", pady=(8, 0))
 
-        health_percent_label = ttk.Label(main_frame, textvariable=self.health_percent_var, font=("Segoe UI", 12, "bold"))
-        health_percent_label.grid(row=7, column=0, sticky="w", pady=(12, 0))
+        warning_threshold_entry = ttk.Entry(main_frame, textvariable=self.warning_threshold_var, width=10)
+        warning_threshold_entry.grid(row=6, column=1, sticky="w", padx=(8, 0))
+
+        current_health_label = ttk.Label(main_frame, textvariable=self.current_health_var)
+        current_health_label.grid(row=7, column=0, sticky="w", pady=(4, 0))
+
+        self.health_percent_label = ttk.Label(
+            main_frame,
+            textvariable=self.health_percent_var,
+            font=("Segoe UI", 12, "bold")
+        )
+        self.health_percent_label.grid(row=8, column=0, sticky="w", pady=(12, 0))
+
+        self.warning_state_label = ttk.Label(main_frame, textvariable=self.warning_state_var)
+        self.warning_state_label.grid(row=9, column=0, sticky="w", pady=(4, 0))
+
+        warning_duration_label = ttk.Label(main_frame, textvariable=self.warning_duration_var)
+        warning_duration_label.grid(row=10, column=0, sticky="w", pady=(4, 0))
 
         self.max_health_var.trace_add("write", self.on_max_health_change)
+        self.warning_threshold_var.trace_add("write", self.on_warning_threshold_change)
 
     def open_selector(self):
         selector, canvas = self.create_selector_window(cursor="cross")
@@ -175,6 +200,35 @@ class RegionRatioApp:
     def on_max_health_change(self, *args):
         self.update_health_display()
 
+    def on_warning_threshold_change(self, *args):
+        self.update_health_display()
+
+    def parse_warning_threshold(self):
+        value = self.warning_threshold_var.get().strip()
+        try:
+            threshold = int(value)
+        except ValueError:
+            return 0
+        return max(0, min(99, threshold))
+
+    def update_warning_state(self, health_percent):
+        threshold = self.parse_warning_threshold()
+        if health_percent < threshold:
+            if self.warning_start_time is None:
+                self.warning_start_time = time.monotonic()
+            elapsed = time.monotonic() - self.warning_start_time
+            elapsed = round(elapsed / 0.25) * 0.25
+            self.warning_state_var.set("경고 상태: 경고")
+            self.warning_duration_var.set(f"경고 지속시간: {elapsed:.2f}초")
+            self.health_percent_label.configure(style="Warning.TLabel")
+            self.warning_state_label.configure(style="Warning.TLabel")
+        else:
+            self.warning_start_time = None
+            self.warning_state_var.set("경고 상태: 정상")
+            self.warning_duration_var.set("경고 지속시간: 0.00초")
+            self.health_percent_label.configure(style="TLabel")
+            self.warning_state_label.configure(style="TLabel")
+
     def start_updates(self):
         if self.update_job is not None:
             self.root.after_cancel(self.update_job)
@@ -182,14 +236,15 @@ class RegionRatioApp:
 
     def update_health_display(self):
         health_percent = (100 / 82) * ((self.hp_pixels / 2) + 3)
-        rounded_percent = round(health_percent, 2)
-        self.health_percent_var.set(f"체력 %: {rounded_percent:.2f}")
+        rounded_percent = int(health_percent + 0.5)
+        self.health_percent_var.set(f"체력 %: {rounded_percent}")
         try:
             max_health = float(self.max_health_var.get())
         except ValueError:
             max_health = 0
         current_health = round(max_health * (health_percent / 100))
         self.current_health_var.set(f"현재 체력: {current_health}")
+        self.update_warning_state(rounded_percent)
 
     def update_ratio(self):
         if self.region is None:
