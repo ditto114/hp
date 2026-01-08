@@ -104,16 +104,12 @@ class RegionRatioApp:
         selector = tk.Toplevel(self.root)
         selector.attributes("-fullscreen", True)
         selector.attributes("-topmost", True)
+        selector.attributes("-alpha", 0.01)
         selector.grab_set()
 
-        transparent_color = "#ff00ff"
-        selector.configure(background=transparent_color)
-        canvas = tk.Canvas(selector, cursor=cursor, bg=transparent_color, highlightthickness=0)
+        selector.configure(background="black")
+        canvas = tk.Canvas(selector, cursor=cursor, bg="black", highlightthickness=0)
         canvas.pack(fill="both", expand=True)
-        try:
-            selector.attributes("-transparentcolor", transparent_color)
-        except tk.TclError:
-            selector.attributes("-alpha", 1.0)
 
         return selector, canvas
 
