@@ -39,15 +39,7 @@ class RegionRatioApp:
         count_label.grid(row=3, column=0, sticky="w", pady=(8, 0))
 
     def open_selector(self):
-        selector = tk.Toplevel(self.root)
-        selector.attributes("-fullscreen", True)
-        selector.attributes("-alpha", 0.3)
-        selector.configure(background="black")
-        selector.attributes("-topmost", True)
-        selector.grab_set()
-
-        canvas = tk.Canvas(selector, cursor="cross", bg="black", highlightthickness=0)
-        canvas.pack(fill="both", expand=True)
+        selector, canvas = self.create_selector_window(cursor="cross")
 
         start = {"x": 0, "y": 0}
         rect_id = {"id": None}
@@ -88,15 +80,7 @@ class RegionRatioApp:
         canvas.bind("<ButtonRelease-1>", on_release)
 
     def open_pixel_selector(self):
-        selector = tk.Toplevel(self.root)
-        selector.attributes("-fullscreen", True)
-        selector.attributes("-alpha", 0.3)
-        selector.configure(background="black")
-        selector.attributes("-topmost", True)
-        selector.grab_set()
-
-        canvas = tk.Canvas(selector, cursor="tcross", bg="black", highlightthickness=0)
-        canvas.pack(fill="both", expand=True)
+        selector, canvas = self.create_selector_window(cursor="tcross")
 
         def on_click(event):
             from PIL import ImageGrab
@@ -115,6 +99,19 @@ class RegionRatioApp:
             selector.destroy()
 
         canvas.bind("<ButtonPress-1>", on_click)
+
+    def create_selector_window(self, cursor):
+        selector = tk.Toplevel(self.root)
+        selector.attributes("-fullscreen", True)
+        selector.attributes("-topmost", True)
+        selector.attributes("-alpha", 0.01)
+        selector.grab_set()
+
+        selector.configure(background="black")
+        canvas = tk.Canvas(selector, cursor=cursor, bg="black", highlightthickness=0)
+        canvas.pack(fill="both", expand=True)
+
+        return selector, canvas
 
     def start_updates(self):
         if self.update_job is not None:
