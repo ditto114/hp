@@ -1,7 +1,9 @@
 import tkinter as tk
 from tkinter import ttk
+import random
 import time
 
+import pyautogui
 
 def normalize_pixel(pixel):
     return tuple(pixel[:3])
@@ -27,6 +29,10 @@ class RegionRatioApp:
         self.warning_threshold_var = tk.StringVar(value="30")
         self.warning_state_var = tk.StringVar(value="경고 상태: 정상")
         self.warning_duration_var = tk.StringVar(value="경고 지속시간: 0.00초")
+        self.warning_trigger_duration_var = tk.StringVar(value="2.0")
+        self.warning_shortcut_var = tk.StringVar(value="")
+        self.warning_action_triggered = False
+        self.warning_key_job = None
 
         main_frame = ttk.Frame(root, padding=16)
         main_frame.grid(sticky="nsew")
@@ -72,21 +78,37 @@ class RegionRatioApp:
         warning_threshold_entry = ttk.Entry(main_frame, textvariable=self.warning_threshold_var, width=10)
         warning_threshold_entry.grid(row=6, column=1, sticky="w", padx=(8, 0))
 
+        warning_trigger_duration_label = ttk.Label(main_frame, text="경고 지속 후 동작(초):")
+        warning_trigger_duration_label.grid(row=7, column=0, sticky="w", pady=(8, 0))
+
+        warning_trigger_duration_entry = ttk.Entry(
+            main_frame,
+            textvariable=self.warning_trigger_duration_var,
+            width=10
+        )
+        warning_trigger_duration_entry.grid(row=7, column=1, sticky="w", padx=(8, 0))
+
+        warning_shortcut_label = ttk.Label(main_frame, text="경고 단축키(+로 구분):")
+        warning_shortcut_label.grid(row=8, column=0, sticky="w", pady=(8, 0))
+
+        warning_shortcut_entry = ttk.Entry(main_frame, textvariable=self.warning_shortcut_var, width=18)
+        warning_shortcut_entry.grid(row=8, column=1, sticky="w", padx=(8, 0))
+
         current_health_label = ttk.Label(main_frame, textvariable=self.current_health_var)
-        current_health_label.grid(row=7, column=0, sticky="w", pady=(4, 0))
+        current_health_label.grid(row=9, column=0, sticky="w", pady=(4, 0))
 
         self.health_percent_label = ttk.Label(
             main_frame,
             textvariable=self.health_percent_var,
             font=("Segoe UI", 12, "bold")
         )
-        self.health_percent_label.grid(row=8, column=0, sticky="w", pady=(12, 0))
+        self.health_percent_label.grid(row=10, column=0, sticky="w", pady=(12, 0))
 
         self.warning_state_label = ttk.Label(main_frame, textvariable=self.warning_state_var)
-        self.warning_state_label.grid(row=9, column=0, sticky="w", pady=(4, 0))
+        self.warning_state_label.grid(row=11, column=0, sticky="w", pady=(4, 0))
 
         warning_duration_label = ttk.Label(main_frame, textvariable=self.warning_duration_var)
-        warning_duration_label.grid(row=10, column=0, sticky="w", pady=(4, 0))
+        warning_duration_label.grid(row=12, column=0, sticky="w", pady=(4, 0))
 
         self.max_health_var.trace_add("write", self.on_max_health_change)
         self.warning_threshold_var.trace_add("write", self.on_warning_threshold_change)
@@ -211,19 +233,62 @@ class RegionRatioApp:
             return 0
         return max(0, min(99, threshold))
 
+    def parse_warning_trigger_duration(self):
+        value = self.warning_trigger_duration_var.get().strip()
+        try:
+            duration = float(value)
+        except ValueError:
+            return 0.0
+        return max(0.0, duration)
+
+    def parse_warning_shortcut(self):
+        raw_value = self.warning_shortcut_var.get().strip()
+        if not raw_value:
+            return []
+        keys = [key.strip().lower() for key in raw_value.split("+") if key.strip()]
+        return keys
+
+    def schedule_warning_shortcut(self, keys):
+        if not keys or self.warning_action_triggered:
+            return
+        self.warning_action_triggered = True
+        delay_ms = random.randint(0, 200)
+        self.warning_key_job = self.root.after(
+            delay_ms,
+            lambda: self.send_warning_shortcut(keys)
+        )
+
+    def send_warning_shortcut(self, keys):
+        self.warning_key_job = None
+        if not keys:
+            return
+        if len(keys) == 1:
+            pyautogui.press(keys[0])
+        else:
+            pyautogui.hotkey(*keys)
+
     def update_warning_state(self, health_percent):
         threshold = self.parse_warning_threshold()
         if health_percent < threshold:
             if self.warning_start_time is None:
                 self.warning_start_time = time.monotonic()
+                self.warning_action_triggered = False
             elapsed = time.monotonic() - self.warning_start_time
             elapsed = round(elapsed / 0.25) * 0.25
             self.warning_state_var.set("경고 상태: 경고")
             self.warning_duration_var.set(f"경고 지속시간: {elapsed:.2f}초")
             self.health_percent_label.configure(style="Warning.TLabel")
             self.warning_state_label.configure(style="Warning.TLabel")
+            trigger_duration = self.parse_warning_trigger_duration()
+            if not self.warning_action_triggered and elapsed >= trigger_duration:
+                keys = self.parse_warning_shortcut()
+                self.schedule_warning_shortcut(keys)
         else:
             self.warning_start_time = None
+            if self.warning_key_job is not None:
+                self.root.after_cancel(self.warning_key_job)
+                self.warning_key_job = None
+            self.warning_action_triggered = False
             self.warning_state_var.set("경고 상태: 정상")
             self.warning_duration_var.set("경고 지속시간: 0.00초")
             self.health_percent_label.configure(style="TLabel")
