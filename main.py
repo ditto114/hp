@@ -91,8 +91,20 @@ class RegionRatioApp:
         warning_shortcut_label = ttk.Label(main_frame, text="경고 단축키(+로 구분):")
         warning_shortcut_label.grid(row=8, column=0, sticky="w", pady=(8, 0))
 
-        warning_shortcut_entry = ttk.Entry(main_frame, textvariable=self.warning_shortcut_var, width=18)
+        warning_shortcut_entry = ttk.Entry(
+            main_frame,
+            textvariable=self.warning_shortcut_var,
+            width=18,
+            state="readonly"
+        )
         warning_shortcut_entry.grid(row=8, column=1, sticky="w", padx=(8, 0))
+
+        warning_shortcut_button = ttk.Button(
+            main_frame,
+            text="키 입력",
+            command=self.capture_warning_shortcut
+        )
+        warning_shortcut_button.grid(row=8, column=2, sticky="w", padx=(8, 0))
 
         current_health_label = ttk.Label(main_frame, textvariable=self.current_health_var)
         current_health_label.grid(row=9, column=0, sticky="w", pady=(4, 0))
@@ -247,6 +259,58 @@ class RegionRatioApp:
             return []
         keys = [key.strip().lower() for key in raw_value.split("+") if key.strip()]
         return keys
+
+    def format_shortcut_from_event(self, event):
+        modifier_keys = {
+            "shift_l", "shift_r",
+            "control_l", "control_r",
+            "alt_l", "alt_r",
+            "meta_l", "meta_r",
+            "super_l", "super_r"
+        }
+        modifiers = []
+        if event.state & 0x0004:
+            modifiers.append("ctrl")
+        if event.state & 0x0001:
+            modifiers.append("shift")
+        if event.state & 0x0008:
+            modifiers.append("alt")
+
+        keysym = event.keysym.lower()
+        if keysym in modifier_keys:
+            return None
+        modifiers.append(keysym)
+        return "+".join(modifiers)
+
+    def capture_warning_shortcut(self):
+        if hasattr(self, "shortcut_capture_window") and self.shortcut_capture_window is not None:
+            self.shortcut_capture_window.lift()
+            return
+
+        self.shortcut_capture_window = tk.Toplevel(self.root)
+        self.shortcut_capture_window.title("단축키 입력")
+        self.shortcut_capture_window.attributes("-topmost", True)
+        message = ttk.Label(
+            self.shortcut_capture_window,
+            text="원하는 단축키를 누르세요.",
+            padding=16
+        )
+        message.pack()
+
+        def on_key(event):
+            shortcut = self.format_shortcut_from_event(event)
+            if shortcut:
+                self.warning_shortcut_var.set(shortcut)
+                self.shortcut_capture_window.destroy()
+                self.shortcut_capture_window = None
+
+        def on_close():
+            self.shortcut_capture_window.destroy()
+            self.shortcut_capture_window = None
+
+        self.shortcut_capture_window.bind("<KeyPress>", on_key)
+        self.shortcut_capture_window.protocol("WM_DELETE_WINDOW", on_close)
+        self.shortcut_capture_window.focus_set()
 
     def schedule_warning_shortcut(self, keys):
         if not keys or self.warning_action_triggered:
