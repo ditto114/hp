@@ -1,9 +1,9 @@
 import tkinter as tk
 from tkinter import ttk
 
-def is_red(pixel):
-    r, g, b = pixel
-    return r >= 160 and r > g + 40 and r > b + 40
+
+def normalize_pixel(pixel):
+    return tuple(pixel[:3])
 
 
 class RegionRatioApp:
@@ -12,9 +12,11 @@ class RegionRatioApp:
         self.root.title("색상 비율 측정기")
         self.region = None
         self.update_job = None
+        self.selected_color = None
 
-        self.status_var = tk.StringVar(value="영역을 선택하세요.")
-        self.red_count_var = tk.StringVar(value="적색 픽셀 수: 0")
+        self.status_var = tk.StringVar(value="영역과 픽셀을 선택하세요.")
+        self.color_var = tk.StringVar(value="선택된 색상: 없음")
+        self.color_count_var = tk.StringVar(value="선택한 색상 픽셀 수: 0")
 
         main_frame = ttk.Frame(root, padding=16)
         main_frame.grid(sticky="nsew")
@@ -24,11 +26,17 @@ class RegionRatioApp:
         select_button = ttk.Button(main_frame, text="영역 선택", command=self.open_selector)
         select_button.grid(row=0, column=0, sticky="w")
 
+        pixel_button = ttk.Button(main_frame, text="픽셀 선택", command=self.open_pixel_selector)
+        pixel_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
+
         status_label = ttk.Label(main_frame, textvariable=self.status_var)
         status_label.grid(row=1, column=0, sticky="w", pady=(12, 0))
 
-        red_label = ttk.Label(main_frame, textvariable=self.red_count_var, font=("Segoe UI", 14, "bold"))
-        red_label.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        color_label = ttk.Label(main_frame, textvariable=self.color_var)
+        color_label.grid(row=2, column=0, sticky="w", pady=(8, 0))
+
+        count_label = ttk.Label(main_frame, textvariable=self.color_count_var, font=("Segoe UI", 14, "bold"))
+        count_label.grid(row=3, column=0, sticky="w", pady=(8, 0))
 
     def open_selector(self):
         selector = tk.Toplevel(self.root)
@@ -70,7 +78,7 @@ class RegionRatioApp:
                 offset_x = selector.winfo_rootx()
                 offset_y = selector.winfo_rooty()
                 self.region = (x1 + offset_x, y1 + offset_y, x2 + offset_x, y2 + offset_y)
-                self.status_var.set("선택된 영역에서 적색 픽셀 수를 측정 중입니다.")
+                self.status_var.set("선택된 영역에서 색상 픽셀 수를 측정 중입니다.")
                 self.start_updates()
             selector.grab_release()
             selector.destroy()
@@ -78,6 +86,35 @@ class RegionRatioApp:
         canvas.bind("<ButtonPress-1>", on_press)
         canvas.bind("<B1-Motion>", on_drag)
         canvas.bind("<ButtonRelease-1>", on_release)
+
+    def open_pixel_selector(self):
+        selector = tk.Toplevel(self.root)
+        selector.attributes("-fullscreen", True)
+        selector.attributes("-alpha", 0.3)
+        selector.configure(background="black")
+        selector.attributes("-topmost", True)
+        selector.grab_set()
+
+        canvas = tk.Canvas(selector, cursor="tcross", bg="black", highlightthickness=0)
+        canvas.pack(fill="both", expand=True)
+
+        def on_click(event):
+            from PIL import ImageGrab
+
+            offset_x = selector.winfo_rootx()
+            offset_y = selector.winfo_rooty()
+            screen_x = event.x + offset_x
+            screen_y = event.y + offset_y
+            pixel = ImageGrab.grab(bbox=(screen_x, screen_y, screen_x + 1, screen_y + 1)).getpixel((0, 0))
+            self.selected_color = normalize_pixel(pixel)
+            color_hex = "#%02X%02X%02X" % self.selected_color
+            self.color_var.set(f"선택된 색상: {color_hex}")
+            self.status_var.set("선택된 색상 픽셀 수를 측정 중입니다.")
+            self.start_updates()
+            selector.grab_release()
+            selector.destroy()
+
+        canvas.bind("<ButtonPress-1>", on_click)
 
     def start_updates(self):
         if self.update_job is not None:
@@ -92,13 +129,18 @@ class RegionRatioApp:
         from PIL import ImageGrab
 
         image = ImageGrab.grab(bbox=self.region)
-        pixels = list(image.getdata())
-        red_count = 0
-        for pixel in pixels:
-            if is_red(pixel):
-                red_count += 1
+        if self.selected_color is None:
+            self.color_count_var.set("선택한 색상 픽셀 수: 0")
+            self.update_job = self.root.after(250, self.update_ratio)
+            return
 
-        self.red_count_var.set(f"적색 픽셀 수: {red_count}")
+        pixels = list(image.getdata())
+        match_count = 0
+        for pixel in pixels:
+            if normalize_pixel(pixel) == self.selected_color:
+                match_count += 1
+
+        self.color_count_var.set(f"선택한 색상 픽셀 수: {match_count}")
         self.update_job = self.root.after(250, self.update_ratio)
 
 
