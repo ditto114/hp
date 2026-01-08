@@ -89,14 +89,21 @@ class RegionRatioApp:
             offset_y = selector.winfo_rooty()
             screen_x = event.x + offset_x
             screen_y = event.y + offset_y
-            pixel = ImageGrab.grab(bbox=(screen_x, screen_y, screen_x + 1, screen_y + 1)).getpixel((0, 0))
-            self.selected_color = normalize_pixel(pixel)
-            color_hex = "#%02X%02X%02X" % self.selected_color
-            self.color_var.set(f"선택된 색상: {color_hex}")
-            self.status_var.set("선택된 색상 픽셀 수를 측정 중입니다.")
-            self.start_updates()
-            selector.grab_release()
-            selector.destroy()
+            selector.withdraw()
+
+            def capture_pixel():
+                pixel = ImageGrab.grab(
+                    bbox=(screen_x, screen_y, screen_x + 1, screen_y + 1)
+                ).getpixel((0, 0))
+                self.selected_color = normalize_pixel(pixel)
+                color_hex = "#%02X%02X%02X" % self.selected_color
+                self.color_var.set(f"선택된 색상: {color_hex}")
+                self.status_var.set("선택된 색상 픽셀 수를 측정 중입니다.")
+                self.start_updates()
+                selector.grab_release()
+                selector.destroy()
+
+            selector.after(10, capture_pixel)
 
         canvas.bind("<ButtonPress-1>", on_click)
 
