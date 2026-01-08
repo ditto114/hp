@@ -6,13 +6,6 @@ def is_red(pixel):
     return r >= 160 and r > g + 40 and r > b + 40
 
 
-def is_gray(pixel):
-    r, g, b = pixel
-    max_c = max(r, g, b)
-    min_c = min(r, g, b)
-    return max_c - min_c <= 15 and 50 <= r <= 200
-
-
 class RegionRatioApp:
     def __init__(self, root):
         self.root = root
@@ -21,7 +14,7 @@ class RegionRatioApp:
         self.update_job = None
 
         self.status_var = tk.StringVar(value="영역을 선택하세요.")
-        self.ratio_var = tk.StringVar(value="적색 0 : 회색 0")
+        self.red_count_var = tk.StringVar(value="적색 픽셀 수: 0")
 
         main_frame = ttk.Frame(root, padding=16)
         main_frame.grid(sticky="nsew")
@@ -34,8 +27,8 @@ class RegionRatioApp:
         status_label = ttk.Label(main_frame, textvariable=self.status_var)
         status_label.grid(row=1, column=0, sticky="w", pady=(12, 0))
 
-        ratio_label = ttk.Label(main_frame, textvariable=self.ratio_var, font=("Segoe UI", 14, "bold"))
-        ratio_label.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        red_label = ttk.Label(main_frame, textvariable=self.red_count_var, font=("Segoe UI", 14, "bold"))
+        red_label.grid(row=2, column=0, sticky="w", pady=(8, 0))
 
     def open_selector(self):
         selector = tk.Toplevel(self.root)
@@ -77,7 +70,7 @@ class RegionRatioApp:
                 offset_x = selector.winfo_rootx()
                 offset_y = selector.winfo_rooty()
                 self.region = (x1 + offset_x, y1 + offset_y, x2 + offset_x, y2 + offset_y)
-                self.status_var.set("선택된 영역에서 비율을 측정 중입니다.")
+                self.status_var.set("선택된 영역에서 적색 픽셀 수를 측정 중입니다.")
                 self.start_updates()
             selector.grab_release()
             selector.destroy()
@@ -101,14 +94,11 @@ class RegionRatioApp:
         image = ImageGrab.grab(bbox=self.region)
         pixels = list(image.getdata())
         red_count = 0
-        gray_count = 0
         for pixel in pixels:
             if is_red(pixel):
                 red_count += 1
-            elif is_gray(pixel):
-                gray_count += 1
 
-        self.ratio_var.set(f"적색 {red_count} : 회색 {gray_count}")
+        self.red_count_var.set(f"적색 픽셀 수: {red_count}")
         self.update_job = self.root.after(250, self.update_ratio)
 
 
