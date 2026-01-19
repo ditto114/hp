@@ -1118,6 +1118,8 @@ class RegionRatioApp:
         self.keydown_warning_restore = [False, False]
         for slot_index, active in enumerate(self.keydown_actives):
             delay = self.parse_keydown_warning_reenable(slot_index)
+            if delay <= 0:
+                continue
             restore_after_delay = active and delay > 0
             self.keydown_warning_restore[slot_index] = restore_after_delay
             if active:
