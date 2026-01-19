@@ -36,13 +36,13 @@ class RegionRatioApp:
         self.timer_seconds_var = tk.StringVar(value="5")
         self.keydown_shortcut_vars = [tk.StringVar(value=""), tk.StringVar(value="")]
         self.keydown_key_vars = [tk.StringVar(value=""), tk.StringVar(value="")]
-        self.keydown_warning_reenable_var = tk.StringVar(value="5")
+        self.keydown_warning_reenable_vars = [tk.StringVar(value="5"), tk.StringVar(value="5")]
         self.keydown_state_var = tk.StringVar(value="키다운 상태: 1=OFF, 2=OFF")
         self.keydown_actives = [False, False]
         self.keydown_shortcut_active = [False, False]
         self.pressed_keys = set()
         self.keydown_warning_triggered = False
-        self.keydown_warning_job = None
+        self.keydown_warning_jobs = [None, None]
         self.keydown_warning_restore = [False, False]
         self.overlay_enabled_var = tk.BooleanVar(value=False)
         self.overlay_window = None
@@ -182,39 +182,55 @@ class RegionRatioApp:
         keydown_state_label = ttk.Label(main_frame, textvariable=self.keydown_state_var)
         keydown_state_label.grid(row=15, column=0, sticky="w", pady=(8, 0))
 
-        keydown_warning_reenable_label = ttk.Label(main_frame, text="경고 후 토글 복귀 시간(초):")
-        keydown_warning_reenable_label.grid(row=16, column=0, sticky="w", pady=(8, 0))
-
-        keydown_warning_reenable_entry = ttk.Entry(
+        keydown_warning_reenable_label_1 = ttk.Label(
             main_frame,
-            textvariable=self.keydown_warning_reenable_var,
+            text="경고 후 토글 복귀 시간 1(초):"
+        )
+        keydown_warning_reenable_label_1.grid(row=16, column=0, sticky="w", pady=(8, 0))
+
+        keydown_warning_reenable_entry_1 = ttk.Entry(
+            main_frame,
+            textvariable=self.keydown_warning_reenable_vars[0],
             width=10
         )
-        keydown_warning_reenable_entry.grid(row=16, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        keydown_warning_reenable_entry_1.grid(row=16, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        keydown_warning_reenable_label_2 = ttk.Label(
+            main_frame,
+            text="경고 후 토글 복귀 시간 2(초):"
+        )
+        keydown_warning_reenable_label_2.grid(row=17, column=0, sticky="w", pady=(8, 0))
+
+        keydown_warning_reenable_entry_2 = ttk.Entry(
+            main_frame,
+            textvariable=self.keydown_warning_reenable_vars[1],
+            width=10
+        )
+        keydown_warning_reenable_entry_2.grid(row=17, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
 
         separator = ttk.Separator(main_frame, orient="horizontal")
-        separator.grid(row=17, column=0, columnspan=3, sticky="ew", pady=12)
+        separator.grid(row=18, column=0, columnspan=3, sticky="ew", pady=12)
 
         timer_title = ttk.Label(main_frame, text="키 타이머", font=("Segoe UI", 12, "bold"))
-        timer_title.grid(row=18, column=0, sticky="w")
+        timer_title.grid(row=19, column=0, sticky="w")
 
         timer_key_label = ttk.Label(main_frame, text="키 입력:")
-        timer_key_label.grid(row=19, column=0, sticky="w", pady=(8, 0))
+        timer_key_label.grid(row=20, column=0, sticky="w", pady=(8, 0))
 
         timer_key_entry = ttk.Entry(main_frame, textvariable=self.timer_key_var, width=12, state="readonly")
-        timer_key_entry.grid(row=19, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        timer_key_entry.grid(row=20, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
 
         timer_key_button = ttk.Button(main_frame, text="키 입력", command=self.capture_timer_key)
-        timer_key_button.grid(row=19, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+        timer_key_button.grid(row=20, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
 
         timer_seconds_label = ttk.Label(main_frame, text="시간(초):")
-        timer_seconds_label.grid(row=20, column=0, sticky="w", pady=(8, 0))
+        timer_seconds_label.grid(row=21, column=0, sticky="w", pady=(8, 0))
 
         timer_seconds_entry = ttk.Entry(main_frame, textvariable=self.timer_seconds_var, width=10)
-        timer_seconds_entry.grid(row=20, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        timer_seconds_entry.grid(row=21, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
 
         timer_add_button = ttk.Button(main_frame, text="타이머 추가", command=self.add_key_timer)
-        timer_add_button.grid(row=20, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+        timer_add_button.grid(row=21, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
 
         timer_overlay_check = ttk.Checkbutton(
             main_frame,
@@ -222,10 +238,10 @@ class RegionRatioApp:
             variable=self.overlay_enabled_var,
             command=self.toggle_timer_overlay
         )
-        timer_overlay_check.grid(row=21, column=0, sticky="w", pady=(8, 0))
+        timer_overlay_check.grid(row=22, column=0, sticky="w", pady=(8, 0))
 
         self.timer_list_frame = ttk.Frame(main_frame)
-        self.timer_list_frame.grid(row=22, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        self.timer_list_frame.grid(row=23, column=0, columnspan=3, sticky="ew", pady=(8, 0))
 
         self.initialize_default_timer()
 
@@ -235,7 +251,8 @@ class RegionRatioApp:
             shortcut_var.trace_add("write", self.on_keydown_shortcut_change)
         for key_var in self.keydown_key_vars:
             key_var.trace_add("write", self.on_keydown_key_change)
-        self.keydown_warning_reenable_var.trace_add("write", self.on_keydown_warning_reenable_change)
+        for warning_var in self.keydown_warning_reenable_vars:
+            warning_var.trace_add("write", self.on_keydown_warning_reenable_change)
         self.overlay_enabled_var.trace_add("write", self.on_overlay_enabled_change)
 
         self.update_keydown_state_label()
@@ -389,8 +406,8 @@ class RegionRatioApp:
     def parse_keydown_key(self, index):
         return self.keydown_key_vars[index].get().strip().lower()
 
-    def parse_keydown_warning_reenable(self):
-        value = self.keydown_warning_reenable_var.get().strip()
+    def parse_keydown_warning_reenable(self, slot_index):
+        value = self.keydown_warning_reenable_vars[slot_index].get().strip()
         try:
             duration = float(value)
         except ValueError:
@@ -953,8 +970,15 @@ class RegionRatioApp:
         self.keydown_key_vars[1].set(
             data.get("keydown_key_2", data.get("keydown_key_secondary", self.keydown_key_vars[1].get()))
         )
-        self.keydown_warning_reenable_var.set(str(
-            data.get("keydown_warning_reenable", self.keydown_warning_reenable_var.get())
+        fallback_reenable = str(data.get(
+            "keydown_warning_reenable",
+            self.keydown_warning_reenable_vars[0].get()
+        ))
+        self.keydown_warning_reenable_vars[0].set(str(
+            data.get("keydown_warning_reenable_1", fallback_reenable)
+        ))
+        self.keydown_warning_reenable_vars[1].set(str(
+            data.get("keydown_warning_reenable_2", fallback_reenable)
         ))
         timer_seconds = data.get("timer_seconds", self.timer_seconds_var.get())
         self.timer_seconds_var.set(str(timer_seconds))
@@ -996,7 +1020,8 @@ class RegionRatioApp:
             "keydown_key_1": self.keydown_key_vars[0].get(),
             "keydown_shortcut_2": self.keydown_shortcut_vars[1].get(),
             "keydown_key_2": self.keydown_key_vars[1].get(),
-            "keydown_warning_reenable": self.keydown_warning_reenable_var.get(),
+            "keydown_warning_reenable_1": self.keydown_warning_reenable_vars[0].get(),
+            "keydown_warning_reenable_2": self.keydown_warning_reenable_vars[1].get(),
             "timer_seconds": self.timer_seconds_var.get(),
             "overlay_enabled": self.overlay_enabled_var.get(),
             "key_timers": [
@@ -1054,9 +1079,10 @@ class RegionRatioApp:
                 self.set_keydown_state(slot_index, False)
 
     def cancel_keydown_jobs(self):
-        if self.keydown_warning_job is not None:
-            self.root.after_cancel(self.keydown_warning_job)
-            self.keydown_warning_job = None
+        for index, job in enumerate(self.keydown_warning_jobs):
+            if job is not None:
+                self.root.after_cancel(job)
+                self.keydown_warning_jobs[index] = None
         self.keydown_warning_restore = [False, False]
 
     def handle_keydown_warning_logic(self, health_percent):
@@ -1087,27 +1113,26 @@ class RegionRatioApp:
         self.update_overlay_keydown_status()
 
     def trigger_keydown_warning_toggle(self):
-        if self.keydown_warning_job is not None:
+        if any(job is not None for job in self.keydown_warning_jobs):
             return
-        delay = self.parse_keydown_warning_reenable()
-        self.keydown_warning_restore = self.keydown_actives.copy()
+        self.keydown_warning_restore = [False, False]
         for slot_index, active in enumerate(self.keydown_actives):
+            delay = self.parse_keydown_warning_reenable(slot_index)
+            restore_after_delay = active and delay > 0
+            self.keydown_warning_restore[slot_index] = restore_after_delay
             if active:
                 self.set_keydown_state(slot_index, False)
-        if delay <= 0:
-            self.finish_keydown_warning_toggle()
-            return
-        self.keydown_warning_job = self.root.after(
-            int(delay * 1000),
-            self.finish_keydown_warning_toggle
-        )
+            if restore_after_delay:
+                self.keydown_warning_jobs[slot_index] = self.root.after(
+                    int(delay * 1000),
+                    lambda index=slot_index: self.finish_keydown_warning_toggle(index)
+                )
 
-    def finish_keydown_warning_toggle(self):
-        self.keydown_warning_job = None
-        for slot_index, restore in enumerate(self.keydown_warning_restore):
-            if restore and not self.keydown_actives[slot_index]:
-                self.set_keydown_state(slot_index, True)
-        self.keydown_warning_restore = [False, False]
+    def finish_keydown_warning_toggle(self, slot_index):
+        self.keydown_warning_jobs[slot_index] = None
+        if self.keydown_warning_restore[slot_index] and not self.keydown_actives[slot_index]:
+            self.set_keydown_state(slot_index, True)
+        self.keydown_warning_restore[slot_index] = False
 
     def start_updates(self):
         if self.update_job is not None:
