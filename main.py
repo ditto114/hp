@@ -53,6 +53,8 @@ class RegionRatioApp:
         self.overlay_enabled_var = tk.BooleanVar(value=False)
         self.overlay_window = None
         self.overlay_container = None
+        self.overlay_drag_offset = {"x": 0, "y": 0}
+        self.default_timer = None
 
         main_frame = ttk.Frame(root, padding=16)
         main_frame.grid(sticky="nsew")
@@ -217,6 +219,8 @@ class RegionRatioApp:
 
         self.timer_list_frame = ttk.Frame(main_frame)
         self.timer_list_frame.grid(row=22, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+
+        self.initialize_default_timer()
 
         self.warning_threshold_var.trace_add("write", self.on_warning_threshold_change)
         self.timer_seconds_var.trace_add("write", self.on_timer_seconds_change)
@@ -577,6 +581,8 @@ class RegionRatioApp:
         self.root.after(0, self.reset_keydown_shortcut_state)
 
     def process_global_key_press(self, key_name):
+        if key_name == "right":
+            self.reset_default_timer()
         self.trigger_key_timer(key_name)
         self.check_keydown_shortcut_toggle()
 
@@ -616,7 +622,7 @@ class RegionRatioApp:
         self.timer_key_var.set("")
         self.save_settings()
 
-    def create_timer_row(self, key_name, duration):
+    def create_timer_row(self, key_name, duration, locked=False):
         row_frame = ttk.Frame(self.timer_list_frame)
         row_frame.pack(fill="x", pady=4)
 
@@ -632,8 +638,9 @@ class RegionRatioApp:
         progress["maximum"] = duration
         progress["value"] = duration
 
-        delete_button = ttk.Button(row_frame, text="삭제", command=lambda: self.remove_timer_row(timer))
-        delete_button.pack(side="right")
+        if not locked:
+            delete_button = ttk.Button(row_frame, text="삭제", command=lambda: self.remove_timer_row(timer))
+            delete_button.pack(side="right")
 
         timer = {
             "key": key_name,
@@ -643,7 +650,8 @@ class RegionRatioApp:
             "frame": row_frame,
             "remaining_var": remaining_var,
             "progress": progress,
-            "overlay": None
+            "overlay": None,
+            "locked": locked
         }
         return timer
 
@@ -659,6 +667,19 @@ class RegionRatioApp:
         for timer in self.key_timers:
             if timer["key"] == key_name:
                 self.start_timer(timer)
+
+    def initialize_default_timer(self):
+        if self.default_timer is not None:
+            return
+        timer = self.create_timer_row("키렉", 75, locked=True)
+        self.key_timers.append(timer)
+        self.default_timer = timer
+        self.start_timer(timer)
+
+    def reset_default_timer(self):
+        if self.default_timer is None:
+            return
+        self.start_timer(self.default_timer)
 
     def start_timer(self, timer):
         timer["remaining"] = timer["duration"]
@@ -698,11 +719,14 @@ class RegionRatioApp:
         self.overlay_window.title("타이머 오버레이")
         self.overlay_window.attributes("-topmost", True)
         self.overlay_window.overrideredirect(True)
-        self.overlay_window.configure(background="#111111")
+        self.overlay_window.configure(background="#FFFFFF")
+        self.overlay_window.attributes("-alpha", 0.7)
         self.overlay_window.geometry("+20+20")
 
-        self.overlay_container = ttk.Frame(self.overlay_window, padding=8)
+        self.overlay_container = tk.Frame(self.overlay_window, bg="#FFFFFF", padx=8, pady=8)
         self.overlay_container.pack(fill="both", expand=True)
+        self.bind_overlay_drag(self.overlay_window)
+        self.bind_overlay_drag(self.overlay_container)
 
         for timer in self.key_timers:
             self.add_overlay_timer_row(timer)
@@ -722,13 +746,11 @@ class RegionRatioApp:
         if timer.get("overlay") is not None:
             return
 
-        row_frame = ttk.Frame(self.overlay_container)
+        row_frame = tk.Frame(self.overlay_container, bg="#FFFFFF")
         row_frame.pack(fill="x", pady=4)
+        row_frame.columnconfigure(1, weight=1)
 
-        key_label = ttk.Label(row_frame, text=f"{timer['key']}")
-        key_label.pack(side="left", padx=(0, 8))
-
-        bar_width = 200
+        bar_width = 100
         bar_height = 20
         canvas = tk.Canvas(
             row_frame,
@@ -737,14 +759,21 @@ class RegionRatioApp:
             bg="#333333",
             highlightthickness=0
         )
-        canvas.pack(side="left")
+        canvas.grid(row=0, column=0, sticky="w", padx=(0, 8))
         bar_rect = canvas.create_rectangle(0, 0, bar_width, bar_height, fill="#4caf50", width=0)
         text_item = canvas.create_text(
             bar_width // 2,
             bar_height // 2,
-            text=f"{timer['remaining']}초",
+            text=f"{timer['remaining']}",
             fill="white"
         )
+
+        key_label = tk.Label(row_frame, text=f"{timer['key']}", bg="#FFFFFF", anchor="e")
+        key_label.grid(row=0, column=1, sticky="e")
+
+        self.bind_overlay_drag(row_frame)
+        self.bind_overlay_drag(canvas)
+        self.bind_overlay_drag(key_label)
 
         timer["overlay"] = {
             "frame": row_frame,
@@ -774,7 +803,24 @@ class RegionRatioApp:
         else:
             fill_width = int(overlay["width"] * max(0, remaining) / max_seconds)
         overlay["canvas"].coords(overlay["rect"], 0, 0, fill_width, overlay["height"])
-        overlay["canvas"].itemconfig(overlay["text"], text=f"{remaining}초")
+        overlay["canvas"].itemconfig(overlay["text"], text=f"{remaining}")
+
+    def bind_overlay_drag(self, widget):
+        widget.bind("<ButtonPress-1>", self.on_overlay_drag_start, add="+")
+        widget.bind("<B1-Motion>", self.on_overlay_drag_motion, add="+")
+
+    def on_overlay_drag_start(self, event):
+        if self.overlay_window is None:
+            return
+        self.overlay_drag_offset["x"] = event.x_root - self.overlay_window.winfo_x()
+        self.overlay_drag_offset["y"] = event.y_root - self.overlay_window.winfo_y()
+
+    def on_overlay_drag_motion(self, event):
+        if self.overlay_window is None:
+            return
+        x = event.x_root - self.overlay_drag_offset["x"]
+        y = event.y_root - self.overlay_drag_offset["y"]
+        self.overlay_window.geometry(f"+{x}+{y}")
 
     def load_settings(self):
         if not os.path.exists(self.settings_path):
@@ -839,6 +885,7 @@ class RegionRatioApp:
             "key_timers": [
                 {"key": timer["key"], "duration": timer["duration"]}
                 for timer in self.key_timers
+                if not timer.get("locked")
             ]
         }
         with open(self.settings_path, "w", encoding="utf-8") as file:
@@ -859,6 +906,7 @@ class RegionRatioApp:
         if health_percent < threshold:
             if self.warning_start_time is None:
                 self.warning_start_time = time.monotonic()
+                self.reset_default_timer()
             elapsed = time.monotonic() - self.warning_start_time
             elapsed = round(elapsed / 0.25) * 0.25
             self.warning_state_var.set("경고 상태: 경고")
