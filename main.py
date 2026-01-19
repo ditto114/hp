@@ -52,9 +52,11 @@ class RegionRatioApp:
         self.keydown_warning_restore = False
         self.overlay_enabled_var = tk.BooleanVar(value=False)
         self.overlay_window = None
+        self.overlay_bg_window = None
         self.overlay_container = None
         self.overlay_drag_offset = {"x": 0, "y": 0}
         self.default_timer = None
+        self.overlay_transparent_color = "#ff00ff"
 
         main_frame = ttk.Frame(root, padding=16)
         main_frame.grid(sticky="nsew")
@@ -671,7 +673,7 @@ class RegionRatioApp:
     def initialize_default_timer(self):
         if self.default_timer is not None:
             return
-        timer = self.create_timer_row("키렉", 75, locked=True)
+        timer = self.create_timer_row("키렉", 60, locked=True)
         self.key_timers.append(timer)
         self.default_timer = timer
         self.start_timer(timer)
@@ -713,31 +715,54 @@ class RegionRatioApp:
         self.save_settings()
 
     def open_timer_overlay(self):
-        if self.overlay_window is not None:
+        if self.overlay_window is not None or self.overlay_bg_window is not None:
             return
+        self.overlay_bg_window = tk.Toplevel(self.root)
+        self.overlay_bg_window.title("타이머 오버레이 배경")
+        self.overlay_bg_window.attributes("-topmost", True)
+        self.overlay_bg_window.overrideredirect(True)
+        self.overlay_bg_window.configure(background="#FFFFFF")
+        self.overlay_bg_window.attributes("-alpha", 0.1)
+        self.overlay_bg_window.geometry("+20+20")
+
         self.overlay_window = tk.Toplevel(self.root)
         self.overlay_window.title("타이머 오버레이")
         self.overlay_window.attributes("-topmost", True)
         self.overlay_window.overrideredirect(True)
-        self.overlay_window.configure(background="#FFFFFF")
-        self.overlay_window.attributes("-alpha", 0.7)
+        self.overlay_window.configure(background=self.overlay_transparent_color)
         self.overlay_window.geometry("+20+20")
+        try:
+            self.overlay_window.attributes("-transparentcolor", self.overlay_transparent_color)
+        except tk.TclError:
+            pass
 
-        self.overlay_container = tk.Frame(self.overlay_window, bg="#FFFFFF", padx=8, pady=8)
+        self.overlay_container = tk.Frame(
+            self.overlay_window,
+            bg=self.overlay_transparent_color,
+            padx=8,
+            pady=8
+        )
         self.overlay_container.pack(fill="both", expand=True)
         self.bind_overlay_drag(self.overlay_window)
         self.bind_overlay_drag(self.overlay_container)
+        self.bind_overlay_drag(self.overlay_bg_window)
 
         for timer in self.key_timers:
             self.add_overlay_timer_row(timer)
+        self.sync_overlay_background()
+        self.overlay_bg_window.lower(self.overlay_window)
 
     def close_timer_overlay(self):
-        if self.overlay_window is None:
+        if self.overlay_window is None and self.overlay_bg_window is None:
             return
         for timer in self.key_timers:
             self.remove_overlay_timer_row(timer)
-        self.overlay_window.destroy()
-        self.overlay_window = None
+        if self.overlay_window is not None:
+            self.overlay_window.destroy()
+            self.overlay_window = None
+        if self.overlay_bg_window is not None:
+            self.overlay_bg_window.destroy()
+            self.overlay_bg_window = None
         self.overlay_container = None
 
     def add_overlay_timer_row(self, timer):
@@ -746,7 +771,7 @@ class RegionRatioApp:
         if timer.get("overlay") is not None:
             return
 
-        row_frame = tk.Frame(self.overlay_container, bg="#FFFFFF")
+        row_frame = tk.Frame(self.overlay_container, bg=self.overlay_transparent_color)
         row_frame.pack(fill="x", pady=4)
         row_frame.columnconfigure(1, weight=1)
 
@@ -768,7 +793,12 @@ class RegionRatioApp:
             fill="white"
         )
 
-        key_label = tk.Label(row_frame, text=f"{timer['key']}", bg="#FFFFFF", anchor="e")
+        key_label = tk.Label(
+            row_frame,
+            text=f"{timer['key']}",
+            bg=self.overlay_transparent_color,
+            anchor="e"
+        )
         key_label.grid(row=0, column=1, sticky="e")
 
         self.bind_overlay_drag(row_frame)
@@ -784,6 +814,7 @@ class RegionRatioApp:
             "height": bar_height
         }
         self.update_overlay_timer(timer)
+        self.sync_overlay_background()
 
     def remove_overlay_timer_row(self, timer):
         overlay = timer.get("overlay")
@@ -791,13 +822,14 @@ class RegionRatioApp:
             return
         overlay["frame"].destroy()
         timer["overlay"] = None
+        self.sync_overlay_background()
 
     def update_overlay_timer(self, timer):
         overlay = timer.get("overlay")
         if overlay is None:
             return
         remaining = timer["remaining"]
-        max_seconds = 300
+        max_seconds = 180
         if remaining >= max_seconds:
             fill_width = overlay["width"]
         else:
@@ -821,6 +853,14 @@ class RegionRatioApp:
         x = event.x_root - self.overlay_drag_offset["x"]
         y = event.y_root - self.overlay_drag_offset["y"]
         self.overlay_window.geometry(f"+{x}+{y}")
+        if self.overlay_bg_window is not None:
+            self.overlay_bg_window.geometry(f"+{x}+{y}")
+
+    def sync_overlay_background(self):
+        if self.overlay_window is None or self.overlay_bg_window is None:
+            return
+        self.overlay_window.update_idletasks()
+        self.overlay_bg_window.geometry(self.overlay_window.geometry())
 
     def load_settings(self):
         if not os.path.exists(self.settings_path):
