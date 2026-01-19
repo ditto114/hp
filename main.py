@@ -51,6 +51,7 @@ class RegionRatioApp:
         self.keydown_warning_start_time = None
         self.keydown_repress_job = None
         self.keydown_temp_release_in_progress = False
+        self.keydown_temp_release_restore = False
 
         main_frame = ttk.Frame(root, padding=16)
         main_frame.grid(sticky="nsew")
@@ -846,11 +847,14 @@ class RegionRatioApp:
             self.root.after_cancel(self.keydown_repress_job)
             self.keydown_repress_job = None
         self.keydown_temp_release_in_progress = False
+        self.keydown_temp_release_restore = False
         self.keydown_warning_start_time = None
 
     def handle_keydown_warning_logic(self, health_percent):
-        if not self.keydown_active:
+        if not self.keydown_active and not self.keydown_temp_release_in_progress:
             self.reset_keydown_warning_state()
+            return
+        if self.keydown_temp_release_in_progress:
             return
         threshold = self.parse_warning_threshold()
         if health_percent < threshold:
@@ -868,19 +872,30 @@ class RegionRatioApp:
 
     def reset_keydown_warning_state(self):
         self.keydown_warning_start_time = None
-        if not self.keydown_temp_release_in_progress:
+        if self.keydown_temp_release_in_progress:
             return
         self.cancel_keydown_jobs()
         if self.keydown_active:
             self.press_keydown_key()
+
+    def set_keydown_state(self, active):
+        self.keydown_active = active
+        if active:
+            self.press_keydown_key()
+        else:
+            self.release_keydown_key()
+
+    def simulate_keydown_shortcut_press(self):
+        self.set_keydown_state(not self.keydown_active)
 
     def trigger_keydown_temp_release(self):
         release_duration = self.parse_keydown_release_duration()
         if release_duration <= 0:
             return
         self.keydown_temp_release_in_progress = True
+        self.keydown_temp_release_restore = self.keydown_active
         self.keydown_warning_start_time = None
-        self.release_keydown_key()
+        self.simulate_keydown_shortcut_press()
         self.keydown_repress_job = self.root.after(
             int(release_duration * 1000),
             self.finish_keydown_temp_release
@@ -889,8 +904,9 @@ class RegionRatioApp:
     def finish_keydown_temp_release(self):
         self.keydown_repress_job = None
         self.keydown_temp_release_in_progress = False
-        if self.keydown_active:
-            self.press_keydown_key()
+        if self.keydown_temp_release_restore and not self.keydown_active:
+            self.simulate_keydown_shortcut_press()
+        self.keydown_temp_release_restore = False
 
     def start_updates(self):
         if self.update_job is not None:
