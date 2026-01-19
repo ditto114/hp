@@ -892,7 +892,7 @@ class RegionRatioApp:
     def start_updates(self):
         if self.update_job is not None:
             self.root.after_cancel(self.update_job)
-        self.update_job = self.root.after(250, self.update_ratio)
+        self.update_job = self.root.after(100, self.update_ratio)
 
     def update_health_display(self):
         health_percent = (100 / 82) * ((self.hp_pixels / 2) + 3)
@@ -908,7 +908,7 @@ class RegionRatioApp:
 
     def update_ratio(self):
         if self.region is None:
-            self.update_job = self.root.after(250, self.update_ratio)
+            self.update_job = self.root.after(100, self.update_ratio)
             return
 
         from PIL import ImageGrab
@@ -918,7 +918,7 @@ class RegionRatioApp:
             self.hp_pixels = 0
             self.hp_pixel_var.set("hp픽셀: 0")
             self.update_health_display()
-            self.update_job = self.root.after(250, self.update_ratio)
+            self.update_job = self.root.after(100, self.update_ratio)
             return
 
         pixels = list(image.getdata())
@@ -930,7 +930,7 @@ class RegionRatioApp:
         self.hp_pixels = match_count
         self.hp_pixel_var.set(f"hp픽셀: {match_count}")
         self.update_health_display()
-        self.update_job = self.root.after(250, self.update_ratio)
+        self.update_job = self.root.after(100, self.update_ratio)
 
 
 if __name__ == "__main__":
