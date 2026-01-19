@@ -2,7 +2,6 @@ import json
 import os
 import tkinter as tk
 from tkinter import ttk
-import random
 import time
 
 import pyautogui
@@ -35,25 +34,22 @@ class RegionRatioApp:
         self.warning_duration_var = tk.StringVar(value="경고 지속시간: 0.00초")
         self.timer_key_var = tk.StringVar(value="")
         self.timer_seconds_var = tk.StringVar(value="5")
-        self.keydown_shortcut_var = tk.StringVar(value="")
-        self.keydown_key_primary_var = tk.StringVar(value="")
-        self.keydown_key_secondary_var = tk.StringVar(value="")
-        self.keydown_delay_min_var = tk.StringVar(value="0.1")
-        self.keydown_delay_max_var = tk.StringVar(value="0.3")
+        self.keydown_shortcut_vars = [tk.StringVar(value=""), tk.StringVar(value="")]
+        self.keydown_key_vars = [tk.StringVar(value=""), tk.StringVar(value="")]
         self.keydown_warning_reenable_var = tk.StringVar(value="5")
-        self.keydown_state_var = tk.StringVar(value="키다운 상태: OFF")
-        self.keydown_active = False
-        self.keydown_shortcut_active = False
+        self.keydown_state_var = tk.StringVar(value="키다운 상태: 1=OFF, 2=OFF")
+        self.keydown_actives = [False, False]
+        self.keydown_shortcut_active = [False, False]
         self.pressed_keys = set()
         self.keydown_warning_triggered = False
         self.keydown_warning_job = None
-        self.keydown_second_job = None
-        self.keydown_second_pressed = False
-        self.keydown_warning_restore = False
+        self.keydown_warning_restore = [False, False]
         self.overlay_enabled_var = tk.BooleanVar(value=False)
         self.overlay_window = None
         self.overlay_bg_window = None
         self.overlay_container = None
+        self.overlay_keydown_frame = None
+        self.overlay_keydown_rects = []
         self.overlay_drag_offset = {"x": 0, "y": 0}
         self.default_timer = None
         self.overlay_transparent_color = "#ff00ff"
@@ -111,68 +107,77 @@ class RegionRatioApp:
         keydown_title = ttk.Label(main_frame, text="키다운 토글", font=("Segoe UI", 12, "bold"))
         keydown_title.grid(row=10, column=0, sticky="w")
 
-        keydown_shortcut_label = ttk.Label(main_frame, text="단축키(+로 구분):")
-        keydown_shortcut_label.grid(row=11, column=0, sticky="w", pady=(8, 0))
+        keydown_shortcut_label_1 = ttk.Label(main_frame, text="단축키 1(+로 구분):")
+        keydown_shortcut_label_1.grid(row=11, column=0, sticky="w", pady=(8, 0))
 
-        keydown_shortcut_entry = ttk.Entry(
+        keydown_shortcut_entry_1 = ttk.Entry(
             main_frame,
-            textvariable=self.keydown_shortcut_var,
+            textvariable=self.keydown_shortcut_vars[0],
             width=18,
             state="readonly"
         )
-        keydown_shortcut_entry.grid(row=11, column=1, sticky="w", padx=(8, 0))
+        keydown_shortcut_entry_1.grid(row=11, column=1, sticky="w", padx=(8, 0))
 
-        keydown_shortcut_button = ttk.Button(
+        keydown_shortcut_button_1 = ttk.Button(
             main_frame,
             text="키 입력",
-            command=self.capture_keydown_shortcut
+            command=lambda: self.capture_keydown_shortcut(0)
         )
-        keydown_shortcut_button.grid(row=11, column=2, sticky="w", padx=(8, 0))
+        keydown_shortcut_button_1.grid(row=11, column=2, sticky="w", padx=(8, 0))
 
-        keydown_key_primary_label = ttk.Label(main_frame, text="키다운 키 1:")
-        keydown_key_primary_label.grid(row=12, column=0, sticky="w", pady=(8, 0))
+        keydown_key_label_1 = ttk.Label(main_frame, text="키다운 키 1:")
+        keydown_key_label_1.grid(row=12, column=0, sticky="w", pady=(8, 0))
 
-        keydown_key_primary_entry = ttk.Entry(
+        keydown_key_entry_1 = ttk.Entry(
             main_frame,
-            textvariable=self.keydown_key_primary_var,
+            textvariable=self.keydown_key_vars[0],
             width=12,
             state="readonly"
         )
-        keydown_key_primary_entry.grid(row=12, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        keydown_key_entry_1.grid(row=12, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
 
-        keydown_key_primary_button = ttk.Button(
+        keydown_key_button_1 = ttk.Button(
             main_frame,
             text="키 입력",
-            command=self.capture_keydown_key_primary
+            command=lambda: self.capture_keydown_key(0)
         )
-        keydown_key_primary_button.grid(row=12, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+        keydown_key_button_1.grid(row=12, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
 
-        keydown_key_secondary_label = ttk.Label(main_frame, text="키다운 키 2:")
-        keydown_key_secondary_label.grid(row=13, column=0, sticky="w", pady=(8, 0))
+        keydown_shortcut_label_2 = ttk.Label(main_frame, text="단축키 2(+로 구분):")
+        keydown_shortcut_label_2.grid(row=13, column=0, sticky="w", pady=(8, 0))
 
-        keydown_key_secondary_entry = ttk.Entry(
+        keydown_shortcut_entry_2 = ttk.Entry(
             main_frame,
-            textvariable=self.keydown_key_secondary_var,
+            textvariable=self.keydown_shortcut_vars[1],
+            width=18,
+            state="readonly"
+        )
+        keydown_shortcut_entry_2.grid(row=13, column=1, sticky="w", padx=(8, 0))
+
+        keydown_shortcut_button_2 = ttk.Button(
+            main_frame,
+            text="키 입력",
+            command=lambda: self.capture_keydown_shortcut(1)
+        )
+        keydown_shortcut_button_2.grid(row=13, column=2, sticky="w", padx=(8, 0))
+
+        keydown_key_label_2 = ttk.Label(main_frame, text="키다운 키 2:")
+        keydown_key_label_2.grid(row=14, column=0, sticky="w", pady=(8, 0))
+
+        keydown_key_entry_2 = ttk.Entry(
+            main_frame,
+            textvariable=self.keydown_key_vars[1],
             width=12,
             state="readonly"
         )
-        keydown_key_secondary_entry.grid(row=13, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        keydown_key_entry_2.grid(row=14, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
 
-        keydown_key_secondary_button = ttk.Button(
+        keydown_key_button_2 = ttk.Button(
             main_frame,
             text="키 입력",
-            command=self.capture_keydown_key_secondary
+            command=lambda: self.capture_keydown_key(1)
         )
-        keydown_key_secondary_button.grid(row=13, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
-
-        keydown_delay_label = ttk.Label(main_frame, text="랜덤 딜레이(초) 최소/최대:")
-        keydown_delay_label.grid(row=14, column=0, sticky="w", pady=(8, 0))
-
-        keydown_delay_min_entry = ttk.Entry(main_frame, textvariable=self.keydown_delay_min_var, width=6)
-        keydown_delay_min_entry.grid(row=14, column=1, sticky="w", padx=(8, 0))
-
-        keydown_delay_max_entry = ttk.Entry(main_frame, textvariable=self.keydown_delay_max_var, width=6)
-        keydown_delay_max_entry.grid(row=14, column=2, sticky="w", padx=(8, 0))
+        keydown_key_button_2.grid(row=14, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
 
         keydown_state_label = ttk.Label(main_frame, textvariable=self.keydown_state_var)
         keydown_state_label.grid(row=15, column=0, sticky="w", pady=(8, 0))
@@ -226,14 +231,14 @@ class RegionRatioApp:
 
         self.warning_threshold_var.trace_add("write", self.on_warning_threshold_change)
         self.timer_seconds_var.trace_add("write", self.on_timer_seconds_change)
-        self.keydown_shortcut_var.trace_add("write", self.on_keydown_shortcut_change)
-        self.keydown_key_primary_var.trace_add("write", self.on_keydown_key_change)
-        self.keydown_key_secondary_var.trace_add("write", self.on_keydown_key_change)
-        self.keydown_delay_min_var.trace_add("write", self.on_keydown_delay_change)
-        self.keydown_delay_max_var.trace_add("write", self.on_keydown_delay_change)
+        for shortcut_var in self.keydown_shortcut_vars:
+            shortcut_var.trace_add("write", self.on_keydown_shortcut_change)
+        for key_var in self.keydown_key_vars:
+            key_var.trace_add("write", self.on_keydown_key_change)
         self.keydown_warning_reenable_var.trace_add("write", self.on_keydown_warning_reenable_change)
         self.overlay_enabled_var.trace_add("write", self.on_overlay_enabled_change)
 
+        self.update_keydown_state_label()
         self.load_settings()
         self.start_keyboard_listener()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -360,9 +365,6 @@ class RegionRatioApp:
     def on_keydown_key_change(self, *args):
         self.save_settings()
 
-    def on_keydown_delay_change(self, *args):
-        self.save_settings()
-
     def on_keydown_warning_reenable_change(self, *args):
         self.save_settings()
 
@@ -377,32 +379,15 @@ class RegionRatioApp:
             return 0
         return max(0, min(99, threshold))
 
-    def parse_keydown_shortcut(self):
-        raw_value = self.keydown_shortcut_var.get().strip()
+    def parse_keydown_shortcut(self, index):
+        raw_value = self.keydown_shortcut_vars[index].get().strip()
         if not raw_value:
             return []
         keys = [key.strip().lower() for key in raw_value.split("+") if key.strip()]
         return keys
 
-    def parse_keydown_keys(self):
-        primary = self.keydown_key_primary_var.get().strip().lower()
-        secondary = self.keydown_key_secondary_var.get().strip().lower()
-        return [key for key in (primary, secondary) if key]
-
-    def parse_keydown_delay_range(self):
-        try:
-            min_delay = float(self.keydown_delay_min_var.get().strip())
-        except ValueError:
-            min_delay = 0.0
-        try:
-            max_delay = float(self.keydown_delay_max_var.get().strip())
-        except ValueError:
-            max_delay = 0.0
-        min_delay = max(0.0, min_delay)
-        max_delay = max(0.0, max_delay)
-        if max_delay < min_delay:
-            min_delay, max_delay = max_delay, min_delay
-        return min_delay, max_delay
+    def parse_keydown_key(self, index):
+        return self.keydown_key_vars[index].get().strip().lower()
 
     def parse_keydown_warning_reenable(self):
         value = self.keydown_warning_reenable_var.get().strip()
@@ -411,6 +396,23 @@ class RegionRatioApp:
         except ValueError:
             return 0.0
         return max(0.0, duration)
+
+    def update_keydown_state_label(self):
+        states = [
+            f"{index + 1}={'ON' if active else 'OFF'}"
+            for index, active in enumerate(self.keydown_actives)
+        ]
+        self.keydown_state_var.set(f"키다운 상태: {', '.join(states)}")
+
+    def update_overlay_keydown_status(self):
+        if not self.overlay_keydown_rects:
+            return
+        colors = ["#f5d000" if active else "#777777" for active in self.keydown_actives]
+        for index, color in enumerate(colors):
+            if index >= len(self.overlay_keydown_rects):
+                continue
+            canvas, rect = self.overlay_keydown_rects[index]
+            canvas.itemconfig(rect, fill=color)
 
     def format_shortcut_from_event(self, event):
         modifier_keys = {
@@ -460,7 +462,7 @@ class RegionRatioApp:
         self.timer_capture_window.protocol("WM_DELETE_WINDOW", on_close)
         self.timer_capture_window.focus_set()
 
-    def capture_keydown_shortcut(self):
+    def capture_keydown_shortcut(self, slot_index):
         if hasattr(self, "keydown_shortcut_capture_window") and self.keydown_shortcut_capture_window is not None:
             self.keydown_shortcut_capture_window.lift()
             return
@@ -470,7 +472,7 @@ class RegionRatioApp:
         self.keydown_shortcut_capture_window.attributes("-topmost", True)
         message = ttk.Label(
             self.keydown_shortcut_capture_window,
-            text="원하는 단축키를 누르세요.",
+            text=f"단축키 {slot_index + 1}을 누르세요.",
             padding=16
         )
         message.pack()
@@ -478,7 +480,7 @@ class RegionRatioApp:
         def on_key(event):
             shortcut = self.format_shortcut_from_event(event)
             if shortcut:
-                self.keydown_shortcut_var.set(shortcut)
+                self.keydown_shortcut_vars[slot_index].set(shortcut)
                 self.keydown_shortcut_capture_window.destroy()
                 self.keydown_shortcut_capture_window = None
 
@@ -490,13 +492,7 @@ class RegionRatioApp:
         self.keydown_shortcut_capture_window.protocol("WM_DELETE_WINDOW", on_close)
         self.keydown_shortcut_capture_window.focus_set()
 
-    def capture_keydown_key_primary(self):
-        self.capture_keydown_key(self.keydown_key_primary_var, "키다운 키 1을 누르세요.")
-
-    def capture_keydown_key_secondary(self):
-        self.capture_keydown_key(self.keydown_key_secondary_var, "키다운 키 2를 누르세요.")
-
-    def capture_keydown_key(self, target_var, message_text):
+    def capture_keydown_key(self, slot_index):
         if hasattr(self, "keydown_key_capture_window") and self.keydown_key_capture_window is not None:
             self.keydown_key_capture_window.lift()
             return
@@ -504,13 +500,17 @@ class RegionRatioApp:
         self.keydown_key_capture_window = tk.Toplevel(self.root)
         self.keydown_key_capture_window.title("키 입력")
         self.keydown_key_capture_window.attributes("-topmost", True)
-        message = ttk.Label(self.keydown_key_capture_window, text=message_text, padding=16)
+        message = ttk.Label(
+            self.keydown_key_capture_window,
+            text=f"키다운 키 {slot_index + 1}을 누르세요.",
+            padding=16
+        )
         message.pack()
 
         def on_key(event):
             key_name = self.normalize_tk_key(event.keysym)
             if key_name:
-                target_var.set(key_name)
+                self.keydown_key_vars[slot_index].set(key_name)
                 self.keydown_key_capture_window.destroy()
                 self.keydown_key_capture_window = None
 
@@ -586,24 +586,26 @@ class RegionRatioApp:
         if key_name == "right":
             self.reset_default_timer()
         self.trigger_key_timer(key_name)
-        self.check_keydown_shortcut_toggle()
+        for slot_index in range(len(self.keydown_shortcut_vars)):
+            self.check_keydown_shortcut_toggle(slot_index)
 
-    def check_keydown_shortcut_toggle(self):
-        shortcut_keys = self.parse_keydown_shortcut()
+    def check_keydown_shortcut_toggle(self, slot_index):
+        shortcut_keys = self.parse_keydown_shortcut(slot_index)
         if not shortcut_keys:
             return
         if all(key in self.pressed_keys for key in shortcut_keys):
-            if not self.keydown_shortcut_active:
-                self.keydown_shortcut_active = True
-                self.toggle_keydown_state()
+            if not self.keydown_shortcut_active[slot_index]:
+                self.keydown_shortcut_active[slot_index] = True
+                self.toggle_keydown_state(slot_index)
 
     def reset_keydown_shortcut_state(self):
-        shortcut_keys = self.parse_keydown_shortcut()
-        if not shortcut_keys:
-            self.keydown_shortcut_active = False
-            return
-        if not all(key in self.pressed_keys for key in shortcut_keys):
-            self.keydown_shortcut_active = False
+        for slot_index in range(len(self.keydown_shortcut_vars)):
+            shortcut_keys = self.parse_keydown_shortcut(slot_index)
+            if not shortcut_keys:
+                self.keydown_shortcut_active[slot_index] = False
+                continue
+            if not all(key in self.pressed_keys for key in shortcut_keys):
+                self.keydown_shortcut_active[slot_index] = False
 
     def add_key_timer(self):
         key_name = self.timer_key_var.get().strip().lower()
@@ -749,6 +751,7 @@ class RegionRatioApp:
 
         for timer in self.key_timers:
             self.add_overlay_timer_row(timer)
+        self.add_overlay_keydown_status_row()
         self.sync_overlay_background()
         self.overlay_bg_window.lower(self.overlay_window)
 
@@ -757,6 +760,10 @@ class RegionRatioApp:
             return
         for timer in self.key_timers:
             self.remove_overlay_timer_row(timer)
+        if self.overlay_keydown_frame is not None:
+            self.overlay_keydown_frame.destroy()
+            self.overlay_keydown_frame = None
+            self.overlay_keydown_rects = []
         if self.overlay_window is not None:
             self.overlay_window.destroy()
             self.overlay_window = None
@@ -772,10 +779,16 @@ class RegionRatioApp:
             return
 
         row_frame = tk.Frame(self.overlay_container, bg=self.overlay_transparent_color)
-        row_frame.pack(fill="x", pady=4)
+        if self.overlay_keydown_frame is not None:
+            row_frame.pack(fill="x", pady=4, before=self.overlay_keydown_frame)
+        else:
+            row_frame.pack(fill="x", pady=4)
         row_frame.columnconfigure(1, weight=1)
 
-        bar_width = 100
+        max_seconds = 180
+        base_width = 100
+        duration_ratio = min(timer["duration"] / max_seconds, 1)
+        bar_width = max(1, int(base_width * duration_ratio))
         bar_height = 20
         canvas = tk.Canvas(
             row_frame,
@@ -830,12 +843,70 @@ class RegionRatioApp:
             return
         remaining = timer["remaining"]
         max_seconds = 180
-        if remaining >= max_seconds:
+        display_total = min(timer["duration"], max_seconds)
+        if display_total <= 0:
+            fill_width = 0
+        elif remaining >= display_total:
             fill_width = overlay["width"]
         else:
-            fill_width = int(overlay["width"] * max(0, remaining) / max_seconds)
+            fill_width = int(overlay["width"] * max(0, remaining) / display_total)
         overlay["canvas"].coords(overlay["rect"], 0, 0, fill_width, overlay["height"])
         overlay["canvas"].itemconfig(overlay["text"], text=f"{remaining}")
+
+    def add_overlay_keydown_status_row(self):
+        if self.overlay_window is None or self.overlay_container is None:
+            return
+        if self.overlay_keydown_frame is not None:
+            return
+
+        frame = tk.Frame(self.overlay_container, bg=self.overlay_transparent_color)
+        frame.pack(fill="x", pady=(6, 0))
+
+        indicator_size = 16
+        left_canvas = tk.Canvas(
+            frame,
+            width=indicator_size,
+            height=indicator_size,
+            bg=self.overlay_transparent_color,
+            highlightthickness=0
+        )
+        left_canvas.pack(side="left")
+        left_rect = left_canvas.create_rectangle(
+            0,
+            0,
+            indicator_size,
+            indicator_size,
+            fill="#777777",
+            width=0
+        )
+
+        right_canvas = tk.Canvas(
+            frame,
+            width=indicator_size,
+            height=indicator_size,
+            bg=self.overlay_transparent_color,
+            highlightthickness=0
+        )
+        right_canvas.pack(side="right")
+        right_rect = right_canvas.create_rectangle(
+            0,
+            0,
+            indicator_size,
+            indicator_size,
+            fill="#777777",
+            width=0
+        )
+
+        self.bind_overlay_drag(frame)
+        self.bind_overlay_drag(left_canvas)
+        self.bind_overlay_drag(right_canvas)
+
+        self.overlay_keydown_frame = frame
+        self.overlay_keydown_rects = [
+            (left_canvas, left_rect),
+            (right_canvas, right_rect)
+        ]
+        self.update_overlay_keydown_status()
 
     def bind_overlay_drag(self, widget):
         widget.bind("<ButtonPress-1>", self.on_overlay_drag_start, add="+")
@@ -870,11 +941,18 @@ class RegionRatioApp:
 
         self.warning_threshold_var.set(str(data.get("warning_threshold", self.warning_threshold_var.get())))
         self.color_input_var.set(data.get("color_input", self.color_input_var.get()))
-        self.keydown_shortcut_var.set(data.get("keydown_shortcut", self.keydown_shortcut_var.get()))
-        self.keydown_key_primary_var.set(data.get("keydown_key_primary", self.keydown_key_primary_var.get()))
-        self.keydown_key_secondary_var.set(data.get("keydown_key_secondary", self.keydown_key_secondary_var.get()))
-        self.keydown_delay_min_var.set(str(data.get("keydown_delay_min", self.keydown_delay_min_var.get())))
-        self.keydown_delay_max_var.set(str(data.get("keydown_delay_max", self.keydown_delay_max_var.get())))
+        self.keydown_shortcut_vars[0].set(
+            data.get("keydown_shortcut_1", data.get("keydown_shortcut", self.keydown_shortcut_vars[0].get()))
+        )
+        self.keydown_key_vars[0].set(
+            data.get("keydown_key_1", data.get("keydown_key_primary", self.keydown_key_vars[0].get()))
+        )
+        self.keydown_shortcut_vars[1].set(
+            data.get("keydown_shortcut_2", self.keydown_shortcut_vars[1].get())
+        )
+        self.keydown_key_vars[1].set(
+            data.get("keydown_key_2", data.get("keydown_key_secondary", self.keydown_key_vars[1].get()))
+        )
         self.keydown_warning_reenable_var.set(str(
             data.get("keydown_warning_reenable", self.keydown_warning_reenable_var.get())
         ))
@@ -914,11 +992,10 @@ class RegionRatioApp:
             if self.selected_color else None,
             "color_input": self.color_input_var.get(),
             "warning_threshold": self.warning_threshold_var.get(),
-            "keydown_shortcut": self.keydown_shortcut_var.get(),
-            "keydown_key_primary": self.keydown_key_primary_var.get(),
-            "keydown_key_secondary": self.keydown_key_secondary_var.get(),
-            "keydown_delay_min": self.keydown_delay_min_var.get(),
-            "keydown_delay_max": self.keydown_delay_max_var.get(),
+            "keydown_shortcut_1": self.keydown_shortcut_vars[0].get(),
+            "keydown_key_1": self.keydown_key_vars[0].get(),
+            "keydown_shortcut_2": self.keydown_shortcut_vars[1].get(),
+            "keydown_key_2": self.keydown_key_vars[1].get(),
             "keydown_warning_reenable": self.keydown_warning_reenable_var.get(),
             "timer_seconds": self.timer_seconds_var.get(),
             "overlay_enabled": self.overlay_enabled_var.get(),
@@ -933,7 +1010,7 @@ class RegionRatioApp:
 
     def on_close(self):
         self.cancel_keydown_jobs()
-        if self.keydown_active:
+        if any(self.keydown_actives):
             self.release_keydown_keys()
         self.save_settings()
         self.close_timer_overlay()
@@ -959,61 +1036,28 @@ class RegionRatioApp:
             self.warning_state_label.configure(style="TLabel")
         self.handle_keydown_warning_logic(health_percent)
 
-    def toggle_keydown_state(self):
-        keydown_keys = self.parse_keydown_keys()
-        if not keydown_keys:
-            self.status_var.set("키다운 키를 입력하세요.")
+    def toggle_keydown_state(self, slot_index):
+        key_name = self.parse_keydown_key(slot_index)
+        if not key_name:
+            self.status_var.set(f"키다운 키 {slot_index + 1}을 입력하세요.")
             return
-        if self.keydown_active:
-            self.set_keydown_state(False)
+        if self.keydown_actives[slot_index]:
+            self.set_keydown_state(slot_index, False)
             self.cancel_keydown_jobs()
         else:
-            self.set_keydown_state(True)
+            self.set_keydown_state(slot_index, True)
             self.reset_keydown_warning_state()
 
-    def press_keydown_keys(self):
-        keydown_keys = self.parse_keydown_keys()
-        if not keydown_keys:
-            return
-        self.keydown_second_pressed = False
-        pyautogui.keyDown(keydown_keys[0])
-        if len(keydown_keys) < 2:
-            return
-        min_delay, max_delay = self.parse_keydown_delay_range()
-        delay = random.uniform(min_delay, max_delay) if max_delay > 0 else 0.0
-        if delay <= 0:
-            self.press_keydown_second_key(keydown_keys[1])
-            return
-        self.keydown_second_job = self.root.after(
-            int(delay * 1000),
-            lambda: self.press_keydown_second_key(keydown_keys[1])
-        )
-
-    def press_keydown_second_key(self, key_name):
-        self.keydown_second_job = None
-        if not self.keydown_active:
-            return
-        self.keydown_second_pressed = True
-        pyautogui.keyDown(key_name)
-
     def release_keydown_keys(self):
-        keydown_keys = self.parse_keydown_keys()
-        if not keydown_keys:
-            return
-        if len(keydown_keys) > 1:
-            pyautogui.keyUp(keydown_keys[1])
-        pyautogui.keyUp(keydown_keys[0])
-        self.keydown_second_pressed = False
+        for slot_index in range(len(self.keydown_actives)):
+            if self.keydown_actives[slot_index]:
+                self.set_keydown_state(slot_index, False)
 
     def cancel_keydown_jobs(self):
         if self.keydown_warning_job is not None:
             self.root.after_cancel(self.keydown_warning_job)
             self.keydown_warning_job = None
-        if self.keydown_second_job is not None:
-            self.root.after_cancel(self.keydown_second_job)
-            self.keydown_second_job = None
-        self.keydown_second_pressed = False
-        self.keydown_warning_restore = False
+        self.keydown_warning_restore = [False, False]
 
     def handle_keydown_warning_logic(self, health_percent):
         threshold = self.parse_warning_threshold()
@@ -1027,24 +1071,29 @@ class RegionRatioApp:
     def reset_keydown_warning_state(self):
         self.keydown_warning_triggered = False
 
-    def set_keydown_state(self, active):
-        self.keydown_active = active
-        self.keydown_state_var.set(f"키다운 상태: {'ON' if active else 'OFF'}")
+    def set_keydown_state(self, slot_index, active):
+        key_name = self.parse_keydown_key(slot_index)
+        if active and not key_name:
+            self.keydown_actives[slot_index] = False
+            self.update_keydown_state_label()
+            self.update_overlay_keydown_status()
+            return
+        self.keydown_actives[slot_index] = active
         if active:
-            self.press_keydown_keys()
-        else:
-            if self.keydown_second_job is not None:
-                self.root.after_cancel(self.keydown_second_job)
-                self.keydown_second_job = None
-            self.release_keydown_keys()
+            pyautogui.keyDown(key_name)
+        elif key_name:
+            pyautogui.keyUp(key_name)
+        self.update_keydown_state_label()
+        self.update_overlay_keydown_status()
 
     def trigger_keydown_warning_toggle(self):
         if self.keydown_warning_job is not None:
             return
         delay = self.parse_keydown_warning_reenable()
-        self.keydown_warning_restore = self.keydown_active
-        if self.keydown_active:
-            self.set_keydown_state(False)
+        self.keydown_warning_restore = self.keydown_actives.copy()
+        for slot_index, active in enumerate(self.keydown_actives):
+            if active:
+                self.set_keydown_state(slot_index, False)
         if delay <= 0:
             self.finish_keydown_warning_toggle()
             return
@@ -1055,9 +1104,10 @@ class RegionRatioApp:
 
     def finish_keydown_warning_toggle(self):
         self.keydown_warning_job = None
-        if self.keydown_warning_restore and not self.keydown_active:
-            self.set_keydown_state(True)
-        self.keydown_warning_restore = False
+        for slot_index, restore in enumerate(self.keydown_warning_restore):
+            if restore and not self.keydown_actives[slot_index]:
+                self.set_keydown_state(slot_index, True)
+        self.keydown_warning_restore = [False, False]
 
     def start_updates(self):
         if self.update_job is not None:
