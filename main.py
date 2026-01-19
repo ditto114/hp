@@ -42,6 +42,15 @@ class RegionRatioApp:
         self.warning_key_job = None
         self.timer_key_var = tk.StringVar(value="")
         self.timer_seconds_var = tk.StringVar(value="5")
+        self.keydown_shortcut_var = tk.StringVar(value="")
+        self.keydown_key_var = tk.StringVar(value="")
+        self.keydown_release_duration_var = tk.StringVar(value="1")
+        self.keydown_active = False
+        self.keydown_shortcut_active = False
+        self.pressed_keys = set()
+        self.keydown_warning_start_time = None
+        self.keydown_repress_job = None
+        self.keydown_temp_release_in_progress = False
 
         main_frame = ttk.Frame(root, padding=16)
         main_frame.grid(sticky="nsew")
@@ -134,35 +143,81 @@ class RegionRatioApp:
         separator = ttk.Separator(main_frame, orient="horizontal")
         separator.grid(row=13, column=0, columnspan=3, sticky="ew", pady=12)
 
+        keydown_title = ttk.Label(main_frame, text="키다운 토글", font=("Segoe UI", 12, "bold"))
+        keydown_title.grid(row=14, column=0, sticky="w")
+
+        keydown_shortcut_label = ttk.Label(main_frame, text="단축키(+로 구분):")
+        keydown_shortcut_label.grid(row=15, column=0, sticky="w", pady=(8, 0))
+
+        keydown_shortcut_entry = ttk.Entry(
+            main_frame,
+            textvariable=self.keydown_shortcut_var,
+            width=18,
+            state="readonly"
+        )
+        keydown_shortcut_entry.grid(row=15, column=1, sticky="w", padx=(8, 0))
+
+        keydown_shortcut_button = ttk.Button(
+            main_frame,
+            text="키 입력",
+            command=self.capture_keydown_shortcut
+        )
+        keydown_shortcut_button.grid(row=15, column=2, sticky="w", padx=(8, 0))
+
+        keydown_key_label = ttk.Label(main_frame, text="키다운 키:")
+        keydown_key_label.grid(row=16, column=0, sticky="w", pady=(8, 0))
+
+        keydown_key_entry = ttk.Entry(main_frame, textvariable=self.keydown_key_var, width=12, state="readonly")
+        keydown_key_entry.grid(row=16, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        keydown_key_button = ttk.Button(main_frame, text="키 입력", command=self.capture_keydown_key)
+        keydown_key_button.grid(row=16, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        keydown_release_label = ttk.Label(main_frame, text="경고 시 키 업 시간(초):")
+        keydown_release_label.grid(row=17, column=0, sticky="w", pady=(8, 0))
+
+        keydown_release_entry = ttk.Entry(
+            main_frame,
+            textvariable=self.keydown_release_duration_var,
+            width=10
+        )
+        keydown_release_entry.grid(row=17, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        separator = ttk.Separator(main_frame, orient="horizontal")
+        separator.grid(row=18, column=0, columnspan=3, sticky="ew", pady=12)
+
         timer_title = ttk.Label(main_frame, text="키 타이머", font=("Segoe UI", 12, "bold"))
-        timer_title.grid(row=14, column=0, sticky="w")
+        timer_title.grid(row=19, column=0, sticky="w")
 
         timer_key_label = ttk.Label(main_frame, text="키 입력:")
-        timer_key_label.grid(row=15, column=0, sticky="w", pady=(8, 0))
+        timer_key_label.grid(row=20, column=0, sticky="w", pady=(8, 0))
 
         timer_key_entry = ttk.Entry(main_frame, textvariable=self.timer_key_var, width=12, state="readonly")
-        timer_key_entry.grid(row=15, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        timer_key_entry.grid(row=20, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
 
         timer_key_button = ttk.Button(main_frame, text="키 입력", command=self.capture_timer_key)
-        timer_key_button.grid(row=15, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+        timer_key_button.grid(row=20, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
 
         timer_seconds_label = ttk.Label(main_frame, text="시간(초):")
-        timer_seconds_label.grid(row=16, column=0, sticky="w", pady=(8, 0))
+        timer_seconds_label.grid(row=21, column=0, sticky="w", pady=(8, 0))
 
         timer_seconds_entry = ttk.Entry(main_frame, textvariable=self.timer_seconds_var, width=10)
-        timer_seconds_entry.grid(row=16, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+        timer_seconds_entry.grid(row=21, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
 
         timer_add_button = ttk.Button(main_frame, text="타이머 추가", command=self.add_key_timer)
-        timer_add_button.grid(row=16, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+        timer_add_button.grid(row=21, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
 
         self.timer_list_frame = ttk.Frame(main_frame)
-        self.timer_list_frame.grid(row=17, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        self.timer_list_frame.grid(row=22, column=0, columnspan=3, sticky="ew", pady=(8, 0))
 
         self.max_health_var.trace_add("write", self.on_max_health_change)
         self.warning_threshold_var.trace_add("write", self.on_warning_threshold_change)
         self.warning_trigger_duration_var.trace_add("write", self.on_warning_trigger_duration_change)
         self.warning_shortcut_var.trace_add("write", self.on_warning_shortcut_change)
         self.timer_seconds_var.trace_add("write", self.on_timer_seconds_change)
+        self.keydown_shortcut_var.trace_add("write", self.on_keydown_shortcut_change)
+        self.keydown_key_var.trace_add("write", self.on_keydown_key_change)
+        self.keydown_release_duration_var.trace_add("write", self.on_keydown_release_duration_change)
 
         self.load_settings()
         self.start_keyboard_listener()
@@ -294,6 +349,15 @@ class RegionRatioApp:
     def on_timer_seconds_change(self, *args):
         self.save_settings()
 
+    def on_keydown_shortcut_change(self, *args):
+        self.save_settings()
+
+    def on_keydown_key_change(self, *args):
+        self.save_settings()
+
+    def on_keydown_release_duration_change(self, *args):
+        self.save_settings()
+
     def parse_warning_threshold(self):
         value = self.warning_threshold_var.get().strip()
         try:
@@ -316,6 +380,24 @@ class RegionRatioApp:
             return []
         keys = [key.strip().lower() for key in raw_value.split("+") if key.strip()]
         return keys
+
+    def parse_keydown_shortcut(self):
+        raw_value = self.keydown_shortcut_var.get().strip()
+        if not raw_value:
+            return []
+        keys = [key.strip().lower() for key in raw_value.split("+") if key.strip()]
+        return keys
+
+    def parse_keydown_key(self):
+        return self.keydown_key_var.get().strip().lower()
+
+    def parse_keydown_release_duration(self):
+        value = self.keydown_release_duration_var.get().strip()
+        try:
+            duration = float(value)
+        except ValueError:
+            return 0.0
+        return max(0.0, duration)
 
     def format_shortcut_from_event(self, event):
         modifier_keys = {
@@ -395,6 +477,62 @@ class RegionRatioApp:
         self.timer_capture_window.protocol("WM_DELETE_WINDOW", on_close)
         self.timer_capture_window.focus_set()
 
+    def capture_keydown_shortcut(self):
+        if hasattr(self, "keydown_shortcut_capture_window") and self.keydown_shortcut_capture_window is not None:
+            self.keydown_shortcut_capture_window.lift()
+            return
+
+        self.keydown_shortcut_capture_window = tk.Toplevel(self.root)
+        self.keydown_shortcut_capture_window.title("단축키 입력")
+        self.keydown_shortcut_capture_window.attributes("-topmost", True)
+        message = ttk.Label(
+            self.keydown_shortcut_capture_window,
+            text="원하는 단축키를 누르세요.",
+            padding=16
+        )
+        message.pack()
+
+        def on_key(event):
+            shortcut = self.format_shortcut_from_event(event)
+            if shortcut:
+                self.keydown_shortcut_var.set(shortcut)
+                self.keydown_shortcut_capture_window.destroy()
+                self.keydown_shortcut_capture_window = None
+
+        def on_close():
+            self.keydown_shortcut_capture_window.destroy()
+            self.keydown_shortcut_capture_window = None
+
+        self.keydown_shortcut_capture_window.bind("<KeyPress>", on_key)
+        self.keydown_shortcut_capture_window.protocol("WM_DELETE_WINDOW", on_close)
+        self.keydown_shortcut_capture_window.focus_set()
+
+    def capture_keydown_key(self):
+        if hasattr(self, "keydown_key_capture_window") and self.keydown_key_capture_window is not None:
+            self.keydown_key_capture_window.lift()
+            return
+
+        self.keydown_key_capture_window = tk.Toplevel(self.root)
+        self.keydown_key_capture_window.title("키 입력")
+        self.keydown_key_capture_window.attributes("-topmost", True)
+        message = ttk.Label(self.keydown_key_capture_window, text="키다운 키를 누르세요.", padding=16)
+        message.pack()
+
+        def on_key(event):
+            key_name = self.normalize_tk_key(event.keysym)
+            if key_name:
+                self.keydown_key_var.set(key_name)
+                self.keydown_key_capture_window.destroy()
+                self.keydown_key_capture_window = None
+
+        def on_close():
+            self.keydown_key_capture_window.destroy()
+            self.keydown_key_capture_window = None
+
+        self.keydown_key_capture_window.bind("<KeyPress>", on_key)
+        self.keydown_key_capture_window.protocol("WM_DELETE_WINDOW", on_close)
+        self.keydown_key_capture_window.focus_set()
+
     def normalize_tk_key(self, keysym):
         normalized = keysym.lower()
         special_map = {
@@ -413,13 +551,30 @@ class RegionRatioApp:
                 return None
             return key.char.lower()
         if isinstance(key, keyboard.Key):
-            return key.name.lower()
+            key_name = key.name.lower()
+            modifier_map = {
+                "ctrl_l": "ctrl",
+                "ctrl_r": "ctrl",
+                "shift_l": "shift",
+                "shift_r": "shift",
+                "alt_l": "alt",
+                "alt_r": "alt",
+                "cmd": "meta",
+                "cmd_l": "meta",
+                "cmd_r": "meta",
+                "meta_l": "meta",
+                "meta_r": "meta"
+            }
+            return modifier_map.get(key_name, key_name)
         return None
 
     def start_keyboard_listener(self):
         if self.keyboard_listener is not None:
             return
-        self.keyboard_listener = keyboard.Listener(on_press=self.handle_global_key_press)
+        self.keyboard_listener = keyboard.Listener(
+            on_press=self.handle_global_key_press,
+            on_release=self.handle_global_key_release
+        )
         self.keyboard_listener.daemon = True
         self.keyboard_listener.start()
 
@@ -427,7 +582,37 @@ class RegionRatioApp:
         key_name = self.normalize_global_key(key)
         if not key_name:
             return
-        self.root.after(0, lambda: self.trigger_key_timer(key_name))
+        self.pressed_keys.add(key_name)
+        self.root.after(0, lambda: self.process_global_key_press(key_name))
+
+    def handle_global_key_release(self, key):
+        key_name = self.normalize_global_key(key)
+        if not key_name:
+            return
+        if key_name in self.pressed_keys:
+            self.pressed_keys.remove(key_name)
+        self.root.after(0, self.reset_keydown_shortcut_state)
+
+    def process_global_key_press(self, key_name):
+        self.trigger_key_timer(key_name)
+        self.check_keydown_shortcut_toggle()
+
+    def check_keydown_shortcut_toggle(self):
+        shortcut_keys = self.parse_keydown_shortcut()
+        if not shortcut_keys:
+            return
+        if all(key in self.pressed_keys for key in shortcut_keys):
+            if not self.keydown_shortcut_active:
+                self.keydown_shortcut_active = True
+                self.toggle_keydown_state()
+
+    def reset_keydown_shortcut_state(self):
+        shortcut_keys = self.parse_keydown_shortcut()
+        if not shortcut_keys:
+            self.keydown_shortcut_active = False
+            return
+        if not all(key in self.pressed_keys for key in shortcut_keys):
+            self.keydown_shortcut_active = False
 
     def add_key_timer(self):
         key_name = self.timer_key_var.get().strip().lower()
@@ -522,6 +707,11 @@ class RegionRatioApp:
         ))
         self.warning_shortcut_var.set(data.get("warning_shortcut", self.warning_shortcut_var.get()))
         self.color_input_var.set(data.get("color_input", self.color_input_var.get()))
+        self.keydown_shortcut_var.set(data.get("keydown_shortcut", self.keydown_shortcut_var.get()))
+        self.keydown_key_var.set(data.get("keydown_key", self.keydown_key_var.get()))
+        self.keydown_release_duration_var.set(str(
+            data.get("keydown_release_duration", self.keydown_release_duration_var.get())
+        ))
         timer_seconds = data.get("timer_seconds", self.timer_seconds_var.get())
         self.timer_seconds_var.set(str(timer_seconds))
 
@@ -558,6 +748,9 @@ class RegionRatioApp:
             "warning_threshold": self.warning_threshold_var.get(),
             "warning_trigger_duration": self.warning_trigger_duration_var.get(),
             "warning_shortcut": self.warning_shortcut_var.get(),
+            "keydown_shortcut": self.keydown_shortcut_var.get(),
+            "keydown_key": self.keydown_key_var.get(),
+            "keydown_release_duration": self.keydown_release_duration_var.get(),
             "timer_seconds": self.timer_seconds_var.get(),
             "key_timers": [
                 {"key": timer["key"], "duration": timer["duration"]}
@@ -568,6 +761,9 @@ class RegionRatioApp:
             json.dump(settings, file, ensure_ascii=False, indent=2)
 
     def on_close(self):
+        self.cancel_keydown_jobs()
+        if self.keydown_active:
+            self.release_keydown_key()
         self.save_settings()
         if self.keyboard_listener is not None:
             self.keyboard_listener.stop()
@@ -618,6 +814,83 @@ class RegionRatioApp:
             self.warning_duration_var.set("경고 지속시간: 0.00초")
             self.health_percent_label.configure(style="TLabel")
             self.warning_state_label.configure(style="TLabel")
+        self.handle_keydown_warning_logic(health_percent)
+
+    def toggle_keydown_state(self):
+        keydown_key = self.parse_keydown_key()
+        if not keydown_key:
+            self.status_var.set("키다운 키를 입력하세요.")
+            return
+        if self.keydown_active:
+            self.keydown_active = False
+            self.cancel_keydown_jobs()
+            self.release_keydown_key()
+        else:
+            self.keydown_active = True
+            self.keydown_warning_start_time = None
+            self.keydown_temp_release_in_progress = False
+            self.press_keydown_key()
+
+    def press_keydown_key(self):
+        keydown_key = self.parse_keydown_key()
+        if keydown_key:
+            pyautogui.keyDown(keydown_key)
+
+    def release_keydown_key(self):
+        keydown_key = self.parse_keydown_key()
+        if keydown_key:
+            pyautogui.keyUp(keydown_key)
+
+    def cancel_keydown_jobs(self):
+        if self.keydown_repress_job is not None:
+            self.root.after_cancel(self.keydown_repress_job)
+            self.keydown_repress_job = None
+        self.keydown_temp_release_in_progress = False
+        self.keydown_warning_start_time = None
+
+    def handle_keydown_warning_logic(self, health_percent):
+        if not self.keydown_active:
+            self.reset_keydown_warning_state()
+            return
+        threshold = self.parse_warning_threshold()
+        if health_percent < threshold:
+            if self.parse_keydown_release_duration() <= 0:
+                return
+            if self.keydown_warning_start_time is None:
+                self.keydown_warning_start_time = time.monotonic()
+                return
+            elapsed = time.monotonic() - self.keydown_warning_start_time
+            trigger_duration = self.parse_warning_trigger_duration()
+            if elapsed >= trigger_duration and not self.keydown_temp_release_in_progress:
+                self.trigger_keydown_temp_release()
+        else:
+            self.reset_keydown_warning_state()
+
+    def reset_keydown_warning_state(self):
+        self.keydown_warning_start_time = None
+        if not self.keydown_temp_release_in_progress:
+            return
+        self.cancel_keydown_jobs()
+        if self.keydown_active:
+            self.press_keydown_key()
+
+    def trigger_keydown_temp_release(self):
+        release_duration = self.parse_keydown_release_duration()
+        if release_duration <= 0:
+            return
+        self.keydown_temp_release_in_progress = True
+        self.keydown_warning_start_time = None
+        self.release_keydown_key()
+        self.keydown_repress_job = self.root.after(
+            int(release_duration * 1000),
+            self.finish_keydown_temp_release
+        )
+
+    def finish_keydown_temp_release(self):
+        self.keydown_repress_job = None
+        self.keydown_temp_release_in_progress = False
+        if self.keydown_active:
+            self.press_keydown_key()
 
     def start_updates(self):
         if self.update_job is not None:
