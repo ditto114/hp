@@ -381,6 +381,7 @@ class RegionRatioApp:
 
     def on_keydown_key_change(self, *args):
         self.save_settings()
+        self.update_overlay_keydown_status()
 
     def on_keydown_warning_reenable_change(self, *args):
         self.save_settings()
@@ -424,7 +425,11 @@ class RegionRatioApp:
     def update_overlay_keydown_status(self):
         if not self.overlay_keydown_rects:
             return
-        colors = ["#f5d000" if active else "#777777" for active in self.keydown_actives]
+        pressed_states = []
+        for index in range(len(self.keydown_key_vars)):
+            key_name = self.parse_keydown_key(index)
+            pressed_states.append(bool(key_name) and key_name in self.pressed_keys)
+        colors = ["#f5d000" if pressed else "#777777" for pressed in pressed_states]
         for index, color in enumerate(colors):
             if index >= len(self.overlay_keydown_rects):
                 continue
@@ -590,6 +595,7 @@ class RegionRatioApp:
             return
         self.pressed_keys.add(key_name)
         self.root.after(0, lambda: self.process_global_key_press(key_name))
+        self.root.after(0, self.update_overlay_keydown_status)
 
     def handle_global_key_release(self, key):
         key_name = self.normalize_global_key(key)
@@ -598,6 +604,7 @@ class RegionRatioApp:
         if key_name in self.pressed_keys:
             self.pressed_keys.remove(key_name)
         self.root.after(0, self.reset_keydown_shortcut_state)
+        self.root.after(0, self.update_overlay_keydown_status)
 
     def process_global_key_press(self, key_name):
         if key_name == "right":
