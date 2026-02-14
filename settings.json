@@ -1,0 +1,37 @@
+{
+  "region": [
+    1209,
+    448,
+    1306,
+    469
+  ],
+  "selected_color": "#BB0000",
+  "color_input": "#",
+  "warning_threshold": "77",
+  "keydown_shortcut_1": "f4",
+  "keydown_key_1": "insert",
+  "keydown_shortcut_2": "f5",
+  "keydown_key_2": "left",
+  "keydown_warning_reenable_1": "0.3",
+  "keydown_warning_reenable_2": "0",
+  "timer_seconds": "600",
+  "overlay_enabled": true,
+  "key_timers": [
+    {
+      "key": "end",
+      "duration": 180
+    },
+    {
+      "key": "f1",
+      "duration": 300
+    },
+    {
+      "key": "f2",
+      "duration": 480
+    },
+    {
+      "key": "f3",
+      "duration": 600
+    }
+  ]
+}

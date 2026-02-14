@@ -3,6 +3,8 @@ import os
 import tkinter as tk
 from tkinter import ttk
 import time
+from PIL import ImageGrab
+import numpy as np
 
 import pyautogui
 from pynput import keyboard
@@ -1159,8 +1161,6 @@ class RegionRatioApp:
             self.update_job = self.root.after(100, self.update_ratio)
             return
 
-        from PIL import ImageGrab
-
         image = ImageGrab.grab(bbox=self.region)
         if self.selected_color is None:
             self.hp_pixels = 0
@@ -1169,11 +1169,18 @@ class RegionRatioApp:
             self.update_job = self.root.after(100, self.update_ratio)
             return
 
-        pixels = list(image.getdata())
-        match_count = 0
-        for pixel in pixels:
-            if normalize_pixel(pixel) == self.selected_color:
-                match_count += 1
+        # Optimize: Use numpy for faster pixel counting
+        img_array = np.array(image)
+        target = np.array(self.selected_color)
+        
+        # Check if the image has an alpha channel (RGBA) or not (RGB)
+        # We only care about the first 3 channels (RGB)
+        if img_array.shape[2] >= 3:
+             # Create a boolean mask where pixels match the target color
+            mask = np.all(img_array[:, :, :3] == target, axis=2)
+            match_count = np.count_nonzero(mask)
+        else:
+             match_count = 0
 
         self.hp_pixels = match_count
         self.hp_pixel_var.set(f"hp픽셀: {match_count}")
