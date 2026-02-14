@@ -1,0 +1,1298 @@
+import json
+import os
+import sys
+import subprocess
+import tkinter as tk
+from tkinter import ttk, messagebox
+import time
+from PIL import ImageGrab
+import numpy as np
+
+import pyautogui
+from pynput import keyboard
+
+# macOS Retina scale factor detection
+def get_display_scale_factor():
+    """Detect Retina display scale factor on macOS."""
+    try:
+        from Quartz import CGDisplayScreenSize, CGMainDisplayID, CGDisplayPixelsWide
+        display_id = CGMainDisplayID()
+        # Compare physical pixels to logical points
+        # CGDisplayPixelsWide returns actual pixel width
+        pixel_width = CGDisplayPixelsWide(display_id)
+        # Use NSScreen to get logical width
+        screen_info = subprocess.run(
+            ["python3", "-c",
+             "import AppKit; s = AppKit.NSScreen.mainScreen(); print(int(s.frame().size.width))"],
+            capture_output=True, text=True, timeout=5
+        )
+        if screen_info.returncode == 0:
+            logical_width = int(screen_info.stdout.strip())
+            if logical_width > 0:
+                return pixel_width / logical_width
+    except Exception:
+        pass
+    try:
+        result = subprocess.run(
+            ["system_profiler", "SPDisplaysDataType"],
+            capture_output=True, text=True, timeout=10
+        )
+        output = result.stdout
+        if "Retina" in output:
+            return 2.0
+    except Exception:
+        pass
+    return 1.0
+
+
+SCALE_FACTOR = get_display_scale_factor()
+FONT_FAMILY = "Helvetica Neue"
+
+
+def normalize_pixel(pixel):
+    return tuple(pixel[:3])
+
+
+def check_macos_permissions():
+    """Show a dialog about required macOS permissions."""
+    permissions_needed = []
+
+    # Check screen recording permission by attempting a tiny grab
+    try:
+        test_img = ImageGrab.grab(bbox=(0, 0, 1, 1))
+        pixels = list(test_img.getdata())
+        # If all pixels are black/zero, permission may be denied
+        if all(p == (0, 0, 0) or p == (0, 0, 0, 255) for p in pixels):
+            permissions_needed.append(
+                "- 화면 녹화 (Screen Recording): 시스템 설정 > 개인정보 보호 및 보안 > 화면 녹화"
+            )
+    except Exception:
+        permissions_needed.append(
+            "- 화면 녹화 (Screen Recording): 시스템 설정 > 개인정보 보호 및 보안 > 화면 녹화"
+        )
+
+    # Accessibility permission note (can't easily check programmatically)
+    permissions_needed.append(
+        "- 손쉬운 사용 (Accessibility): 시스템 설정 > 개인정보 보호 및 보안 > 손쉬운 사용\n"
+        "  (글로벌 키보드 모니터링 및 키 시뮬레이션에 필요)"
+    )
+
+    if permissions_needed:
+        msg = (
+            "이 앱은 다음 macOS 권한이 필요합니다:\n\n"
+            + "\n".join(permissions_needed)
+            + "\n\n권한이 없으면 일부 기능이 작동하지 않을 수 있습니다.\n"
+            "터미널 또는 Python을 해당 권한 목록에 추가하세요."
+        )
+        messagebox.showinfo("macOS 권한 안내", msg)
+
+
+class RegionRatioApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("색상 비율 측정기")
+        self.region = None
+        self.update_job = None
+        self.selected_color = None
+        self.hp_pixels = 0
+        self.warning_start_time = None
+        self.keyboard_listener = None
+        self.key_timers = []
+        self.timer_capture_window = None
+        self.settings_path = os.path.join(os.path.dirname(__file__), "settings.json")
+
+        self.status_var = tk.StringVar(value="영역과 픽셀을 선택하세요.")
+        self.color_var = tk.StringVar(value="선택된 색상: 없음")
+        self.hp_pixel_var = tk.StringVar(value="hp픽셀: 0")
+        self.color_input_var = tk.StringVar(value="#")
+        self.warning_threshold_var = tk.StringVar(value="30")
+        self.warning_state_var = tk.StringVar(value="경고 상태: 정상")
+        self.warning_duration_var = tk.StringVar(value="경고 지속시간: 0.00초")
+        self.timer_key_var = tk.StringVar(value="")
+        self.timer_seconds_var = tk.StringVar(value="5")
+        self.keydown_shortcut_vars = [tk.StringVar(value=""), tk.StringVar(value="")]
+        self.keydown_key_vars = [tk.StringVar(value=""), tk.StringVar(value="")]
+        self.keydown_warning_reenable_vars = [tk.StringVar(value="5"), tk.StringVar(value="5")]
+        self.keydown_state_var = tk.StringVar(value="키다운 상태: 1=OFF, 2=OFF")
+        self.keydown_actives = [False, False]
+        self.keydown_shortcut_active = [False, False]
+        self.pressed_keys = set()
+        self.keydown_warning_triggered = False
+        self.keydown_warning_jobs = [None, None]
+        self.keydown_warning_restore = [False, False]
+        self.overlay_enabled_var = tk.BooleanVar(value=False)
+        self.overlay_window = None
+        self.overlay_bg_window = None
+        self.overlay_container = None
+        self.overlay_keydown_frame = None
+        self.overlay_keydown_rects = []
+        self.overlay_drag_offset = {"x": 0, "y": 0}
+        self.default_timer = None
+        # macOS: no transparent color trick, use dark semi-transparent bg
+        self.overlay_bg_color = "#1a1a1a"
+
+        main_frame = ttk.Frame(root, padding=16)
+        main_frame.grid(sticky="nsew")
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(0, weight=1)
+
+        style = ttk.Style(root)
+        style.configure("Warning.TLabel", foreground="red")
+
+        select_button = ttk.Button(main_frame, text="영역 선택", command=self.open_selector)
+        select_button.grid(row=0, column=0, sticky="w")
+
+        pixel_button = ttk.Button(main_frame, text="픽셀 선택", command=self.open_pixel_selector)
+        pixel_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
+
+        status_label = ttk.Label(main_frame, textvariable=self.status_var)
+        status_label.grid(row=1, column=0, sticky="w", pady=(12, 0))
+
+        color_label = ttk.Label(main_frame, textvariable=self.color_var)
+        color_label.grid(row=2, column=0, sticky="w", pady=(8, 0))
+
+        color_input_label = ttk.Label(main_frame, text="색상 코드 입력(#RRGGBB):")
+        color_input_label.grid(row=3, column=0, sticky="w", pady=(8, 0))
+
+        color_input_entry = ttk.Entry(main_frame, textvariable=self.color_input_var, width=12)
+        color_input_entry.grid(row=3, column=1, sticky="w", padx=(8, 0))
+
+        color_input_button = ttk.Button(main_frame, text="적용", command=self.apply_color_input)
+        color_input_button.grid(row=3, column=2, sticky="w", padx=(8, 0))
+
+        hp_pixel_label = ttk.Label(main_frame, textvariable=self.hp_pixel_var, font=(FONT_FAMILY, 14, "bold"))
+        hp_pixel_label.grid(row=4, column=0, sticky="w", pady=(8, 0))
+
+        warning_title = ttk.Label(main_frame, text="체력 경고", font=(FONT_FAMILY, 12, "bold"))
+        warning_title.grid(row=5, column=0, sticky="w", pady=(8, 0))
+
+        warning_threshold_label = ttk.Label(main_frame, text="체력 경고 %:")
+        warning_threshold_label.grid(row=6, column=0, sticky="w", pady=(8, 0))
+
+        warning_threshold_entry = ttk.Entry(main_frame, textvariable=self.warning_threshold_var, width=10)
+        warning_threshold_entry.grid(row=6, column=1, sticky="w", padx=(8, 0))
+
+        self.warning_state_label = ttk.Label(main_frame, textvariable=self.warning_state_var)
+        self.warning_state_label.grid(row=7, column=0, sticky="w", pady=(4, 0))
+
+        warning_duration_label = ttk.Label(main_frame, textvariable=self.warning_duration_var)
+        warning_duration_label.grid(row=8, column=0, sticky="w", pady=(4, 0))
+
+        separator = ttk.Separator(main_frame, orient="horizontal")
+        separator.grid(row=9, column=0, columnspan=3, sticky="ew", pady=12)
+
+        keydown_title = ttk.Label(main_frame, text="키다운 토글", font=(FONT_FAMILY, 12, "bold"))
+        keydown_title.grid(row=10, column=0, sticky="w")
+
+        keydown_shortcut_label_1 = ttk.Label(main_frame, text="단축키 1(+로 구분):")
+        keydown_shortcut_label_1.grid(row=11, column=0, sticky="w", pady=(8, 0))
+
+        keydown_shortcut_entry_1 = ttk.Entry(
+            main_frame,
+            textvariable=self.keydown_shortcut_vars[0],
+            width=18,
+            state="readonly"
+        )
+        keydown_shortcut_entry_1.grid(row=11, column=1, sticky="w", padx=(8, 0))
+
+        keydown_shortcut_button_1 = ttk.Button(
+            main_frame,
+            text="키 입력",
+            command=lambda: self.capture_keydown_shortcut(0)
+        )
+        keydown_shortcut_button_1.grid(row=11, column=2, sticky="w", padx=(8, 0))
+
+        keydown_key_label_1 = ttk.Label(main_frame, text="키다운 키 1:")
+        keydown_key_label_1.grid(row=12, column=0, sticky="w", pady=(8, 0))
+
+        keydown_key_entry_1 = ttk.Entry(
+            main_frame,
+            textvariable=self.keydown_key_vars[0],
+            width=12,
+            state="readonly"
+        )
+        keydown_key_entry_1.grid(row=12, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        keydown_key_button_1 = ttk.Button(
+            main_frame,
+            text="키 입력",
+            command=lambda: self.capture_keydown_key(0)
+        )
+        keydown_key_button_1.grid(row=12, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        keydown_shortcut_label_2 = ttk.Label(main_frame, text="단축키 2(+로 구분):")
+        keydown_shortcut_label_2.grid(row=13, column=0, sticky="w", pady=(8, 0))
+
+        keydown_shortcut_entry_2 = ttk.Entry(
+            main_frame,
+            textvariable=self.keydown_shortcut_vars[1],
+            width=18,
+            state="readonly"
+        )
+        keydown_shortcut_entry_2.grid(row=13, column=1, sticky="w", padx=(8, 0))
+
+        keydown_shortcut_button_2 = ttk.Button(
+            main_frame,
+            text="키 입력",
+            command=lambda: self.capture_keydown_shortcut(1)
+        )
+        keydown_shortcut_button_2.grid(row=13, column=2, sticky="w", padx=(8, 0))
+
+        keydown_key_label_2 = ttk.Label(main_frame, text="키다운 키 2:")
+        keydown_key_label_2.grid(row=14, column=0, sticky="w", pady=(8, 0))
+
+        keydown_key_entry_2 = ttk.Entry(
+            main_frame,
+            textvariable=self.keydown_key_vars[1],
+            width=12,
+            state="readonly"
+        )
+        keydown_key_entry_2.grid(row=14, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        keydown_key_button_2 = ttk.Button(
+            main_frame,
+            text="키 입력",
+            command=lambda: self.capture_keydown_key(1)
+        )
+        keydown_key_button_2.grid(row=14, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        keydown_state_label = ttk.Label(main_frame, textvariable=self.keydown_state_var)
+        keydown_state_label.grid(row=15, column=0, sticky="w", pady=(8, 0))
+
+        keydown_warning_reenable_label_1 = ttk.Label(
+            main_frame,
+            text="경고 후 토글 복귀 시간 1(초):"
+        )
+        keydown_warning_reenable_label_1.grid(row=16, column=0, sticky="w", pady=(8, 0))
+
+        keydown_warning_reenable_entry_1 = ttk.Entry(
+            main_frame,
+            textvariable=self.keydown_warning_reenable_vars[0],
+            width=10
+        )
+        keydown_warning_reenable_entry_1.grid(row=16, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        keydown_warning_reenable_label_2 = ttk.Label(
+            main_frame,
+            text="경고 후 토글 복귀 시간 2(초):"
+        )
+        keydown_warning_reenable_label_2.grid(row=17, column=0, sticky="w", pady=(8, 0))
+
+        keydown_warning_reenable_entry_2 = ttk.Entry(
+            main_frame,
+            textvariable=self.keydown_warning_reenable_vars[1],
+            width=10
+        )
+        keydown_warning_reenable_entry_2.grid(row=17, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        separator = ttk.Separator(main_frame, orient="horizontal")
+        separator.grid(row=18, column=0, columnspan=3, sticky="ew", pady=12)
+
+        timer_title = ttk.Label(main_frame, text="키 타이머", font=(FONT_FAMILY, 12, "bold"))
+        timer_title.grid(row=19, column=0, sticky="w")
+
+        timer_key_label = ttk.Label(main_frame, text="키 입력:")
+        timer_key_label.grid(row=20, column=0, sticky="w", pady=(8, 0))
+
+        timer_key_entry = ttk.Entry(main_frame, textvariable=self.timer_key_var, width=12, state="readonly")
+        timer_key_entry.grid(row=20, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        timer_key_button = ttk.Button(main_frame, text="키 입력", command=self.capture_timer_key)
+        timer_key_button.grid(row=20, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        timer_seconds_label = ttk.Label(main_frame, text="시간(초):")
+        timer_seconds_label.grid(row=21, column=0, sticky="w", pady=(8, 0))
+
+        timer_seconds_entry = ttk.Entry(main_frame, textvariable=self.timer_seconds_var, width=10)
+        timer_seconds_entry.grid(row=21, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        timer_add_button = ttk.Button(main_frame, text="타이머 추가", command=self.add_key_timer)
+        timer_add_button.grid(row=21, column=2, sticky="w", padx=(8, 0), pady=(8, 0))
+
+        timer_overlay_check = ttk.Checkbutton(
+            main_frame,
+            text="타이머 오버레이 표시",
+            variable=self.overlay_enabled_var,
+            command=self.toggle_timer_overlay
+        )
+        timer_overlay_check.grid(row=22, column=0, sticky="w", pady=(8, 0))
+
+        self.timer_list_frame = ttk.Frame(main_frame)
+        self.timer_list_frame.grid(row=23, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+
+        self.initialize_default_timer()
+
+        self.warning_threshold_var.trace_add("write", self.on_warning_threshold_change)
+        self.timer_seconds_var.trace_add("write", self.on_timer_seconds_change)
+        for shortcut_var in self.keydown_shortcut_vars:
+            shortcut_var.trace_add("write", self.on_keydown_shortcut_change)
+        for key_var in self.keydown_key_vars:
+            key_var.trace_add("write", self.on_keydown_key_change)
+        for warning_var in self.keydown_warning_reenable_vars:
+            warning_var.trace_add("write", self.on_keydown_warning_reenable_change)
+        self.overlay_enabled_var.trace_add("write", self.on_overlay_enabled_change)
+
+        self.update_keydown_state_label()
+        self.load_settings()
+        self.start_keyboard_listener()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        # Show macOS permissions dialog after UI is ready
+        self.root.after(500, check_macos_permissions)
+
+    def get_screen_size(self):
+        """Get screen size in logical coordinates (works with Retina)."""
+        return self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+
+    def open_selector(self):
+        selector, canvas = self.create_selector_window(cursor="cross")
+
+        start = {"x": 0, "y": 0}
+        rect_id = {"id": None}
+
+        def on_press(event):
+            start["x"] = event.x
+            start["y"] = event.y
+            if rect_id["id"] is not None:
+                canvas.delete(rect_id["id"])
+                rect_id["id"] = None
+
+        def on_drag(event):
+            if rect_id["id"] is not None:
+                canvas.delete(rect_id["id"])
+            rect_id["id"] = canvas.create_rectangle(
+                start["x"], start["y"], event.x, event.y,
+                outline="red", width=2
+            )
+
+        def on_release(event):
+            x1 = min(start["x"], event.x)
+            y1 = min(start["y"], event.y)
+            x2 = max(start["x"], event.x)
+            y2 = max(start["y"], event.y)
+            if abs(x2 - x1) < 5 or abs(y2 - y1) < 5:
+                self.status_var.set("선택한 영역이 너무 작습니다.")
+            else:
+                offset_x = selector.winfo_rootx()
+                offset_y = selector.winfo_rooty()
+                self.region = (x1 + offset_x, y1 + offset_y, x2 + offset_x, y2 + offset_y)
+                self.status_var.set("선택된 영역에서 색상 픽셀 수를 측정 중입니다.")
+                self.start_updates()
+                self.save_settings()
+            selector.grab_release()
+            selector.destroy()
+
+        canvas.bind("<ButtonPress-1>", on_press)
+        canvas.bind("<B1-Motion>", on_drag)
+        canvas.bind("<ButtonRelease-1>", on_release)
+
+    def open_pixel_selector(self):
+        selector, canvas = self.create_selector_window(cursor="tcross")
+
+        def on_click(event):
+            offset_x = selector.winfo_rootx()
+            offset_y = selector.winfo_rooty()
+            screen_x = event.x + offset_x
+            screen_y = event.y + offset_y
+            selector.withdraw()
+
+            def capture_pixel():
+                # macOS Retina: scale coordinates for actual pixel capture
+                grab_x = int(screen_x * SCALE_FACTOR)
+                grab_y = int(screen_y * SCALE_FACTOR)
+                # Pillow on macOS uses logical coordinates for grab bbox
+                pixel = ImageGrab.grab(
+                    bbox=(screen_x, screen_y, screen_x + 1, screen_y + 1)
+                ).getpixel((0, 0))
+                self.selected_color = normalize_pixel(pixel)
+                color_hex = "#%02X%02X%02X" % self.selected_color
+                self.color_var.set(f"선택된 색상: {color_hex}")
+                self.status_var.set("선택된 색상 픽셀 수를 측정 중입니다.")
+                self.start_updates()
+                self.save_settings()
+                selector.grab_release()
+                selector.destroy()
+
+            selector.after(10, capture_pixel)
+
+        canvas.bind("<ButtonPress-1>", on_click)
+
+    def create_selector_window(self, cursor):
+        """Create a fullscreen selector window adapted for macOS."""
+        selector = tk.Toplevel(self.root)
+        selector.attributes("-topmost", True)
+        selector.attributes("-alpha", 0.01)
+
+        # macOS: use geometry-based fullscreen instead of -fullscreen attribute
+        screen_w, screen_h = self.get_screen_size()
+        selector.geometry(f"{screen_w}x{screen_h}+0+0")
+        selector.overrideredirect(True)
+
+        selector.configure(background="black")
+        canvas = tk.Canvas(selector, cursor=cursor, bg="black", highlightthickness=0)
+        canvas.pack(fill="both", expand=True)
+
+        # On macOS, grab_set may need a slight delay
+        selector.after(100, lambda: selector.grab_set())
+
+        return selector, canvas
+
+    def parse_color_input(self, value):
+        value = value.strip()
+        if not value:
+            return None
+        if value.startswith("#"):
+            value = value[1:]
+        if len(value) != 6:
+            return None
+        try:
+            return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+        except ValueError:
+            return None
+
+    def apply_color_input(self):
+        color = self.parse_color_input(self.color_input_var.get())
+        if color is None:
+            self.status_var.set("색상 코드를 다시 확인하세요.")
+            return
+        self.selected_color = normalize_pixel(color)
+        color_hex = "#%02X%02X%02X" % self.selected_color
+        self.color_var.set(f"선택된 색상: {color_hex}")
+        self.status_var.set("선택된 색상 픽셀 수를 측정 중입니다.")
+        self.start_updates()
+        self.save_settings()
+
+    def on_warning_threshold_change(self, *args):
+        self.update_health_display()
+        self.save_settings()
+
+    def on_timer_seconds_change(self, *args):
+        self.save_settings()
+
+    def on_keydown_shortcut_change(self, *args):
+        self.save_settings()
+
+    def on_keydown_key_change(self, *args):
+        self.save_settings()
+
+    def on_keydown_warning_reenable_change(self, *args):
+        self.save_settings()
+
+    def on_overlay_enabled_change(self, *args):
+        self.save_settings()
+
+    def parse_warning_threshold(self):
+        value = self.warning_threshold_var.get().strip()
+        try:
+            threshold = int(value)
+        except ValueError:
+            return 0
+        return max(0, min(99, threshold))
+
+    def parse_keydown_shortcut(self, index):
+        raw_value = self.keydown_shortcut_vars[index].get().strip()
+        if not raw_value:
+            return []
+        keys = [key.strip().lower() for key in raw_value.split("+") if key.strip()]
+        return keys
+
+    def parse_keydown_key(self, index):
+        return self.keydown_key_vars[index].get().strip().lower()
+
+    def parse_keydown_warning_reenable(self, slot_index):
+        value = self.keydown_warning_reenable_vars[slot_index].get().strip()
+        try:
+            duration = float(value)
+        except ValueError:
+            return 0.0
+        return max(0.0, duration)
+
+    def update_keydown_state_label(self):
+        states = [
+            f"{index + 1}={'ON' if active else 'OFF'}"
+            for index, active in enumerate(self.keydown_actives)
+        ]
+        self.keydown_state_var.set(f"키다운 상태: {', '.join(states)}")
+
+    def update_overlay_keydown_status(self):
+        if not self.overlay_keydown_rects:
+            return
+        left_active = self.keydown_actives[0] if len(self.keydown_actives) > 0 else False
+        right_key = self.parse_keydown_key(1)
+        right_pressed = right_key in self.pressed_keys if right_key else False
+        colors = [
+            "#f5d000" if left_active else "#777777",
+            "#f5d000" if right_pressed else "#777777"
+        ]
+        for index, color in enumerate(colors):
+            if index >= len(self.overlay_keydown_rects):
+                continue
+            canvas, rect = self.overlay_keydown_rects[index]
+            canvas.itemconfig(rect, fill=color)
+
+    def format_shortcut_from_event(self, event):
+        modifier_keys = {
+            "shift_l", "shift_r",
+            "control_l", "control_r",
+            "alt_l", "alt_r",
+            "meta_l", "meta_r",
+            "super_l", "super_r"
+        }
+        modifiers = []
+        # macOS: Mod1 = Command, 0x0004 = Control, 0x0001 = Shift
+        if event.state & 0x0004:
+            modifiers.append("ctrl")
+        if event.state & 0x0001:
+            modifiers.append("shift")
+        if event.state & 0x0008:
+            modifiers.append("alt")
+        # macOS Command key (Mod1 / 0x0010 on some systems)
+        if event.state & 0x0010:
+            modifiers.append("cmd")
+
+        keysym = event.keysym.lower()
+        if keysym in modifier_keys:
+            return None
+        modifiers.append(keysym)
+        return "+".join(modifiers)
+
+    def capture_timer_key(self):
+        if self.timer_capture_window is not None:
+            self.timer_capture_window.lift()
+            return
+
+        self.timer_capture_window = tk.Toplevel(self.root)
+        self.timer_capture_window.title("키 입력")
+        self.timer_capture_window.attributes("-topmost", True)
+        message = ttk.Label(self.timer_capture_window, text="타이머로 사용할 키를 누르세요.", padding=16)
+        message.pack()
+
+        def on_key(event):
+            key_name = self.normalize_tk_key(event.keysym)
+            if key_name:
+                self.timer_key_var.set(key_name)
+                self.timer_capture_window.destroy()
+                self.timer_capture_window = None
+
+        def on_close():
+            self.timer_capture_window.destroy()
+            self.timer_capture_window = None
+
+        self.timer_capture_window.bind("<KeyPress>", on_key)
+        self.timer_capture_window.protocol("WM_DELETE_WINDOW", on_close)
+        self.timer_capture_window.focus_set()
+
+    def capture_keydown_shortcut(self, slot_index):
+        if hasattr(self, "keydown_shortcut_capture_window") and self.keydown_shortcut_capture_window is not None:
+            self.keydown_shortcut_capture_window.lift()
+            return
+
+        self.keydown_shortcut_capture_window = tk.Toplevel(self.root)
+        self.keydown_shortcut_capture_window.title("단축키 입력")
+        self.keydown_shortcut_capture_window.attributes("-topmost", True)
+        message = ttk.Label(
+            self.keydown_shortcut_capture_window,
+            text=f"단축키 {slot_index + 1}을 누르세요.",
+            padding=16
+        )
+        message.pack()
+
+        def on_key(event):
+            shortcut = self.format_shortcut_from_event(event)
+            if shortcut:
+                self.keydown_shortcut_vars[slot_index].set(shortcut)
+                self.keydown_shortcut_capture_window.destroy()
+                self.keydown_shortcut_capture_window = None
+
+        def on_close():
+            self.keydown_shortcut_capture_window.destroy()
+            self.keydown_shortcut_capture_window = None
+
+        self.keydown_shortcut_capture_window.bind("<KeyPress>", on_key)
+        self.keydown_shortcut_capture_window.protocol("WM_DELETE_WINDOW", on_close)
+        self.keydown_shortcut_capture_window.focus_set()
+
+    def capture_keydown_key(self, slot_index):
+        if hasattr(self, "keydown_key_capture_window") and self.keydown_key_capture_window is not None:
+            self.keydown_key_capture_window.lift()
+            return
+
+        self.keydown_key_capture_window = tk.Toplevel(self.root)
+        self.keydown_key_capture_window.title("키 입력")
+        self.keydown_key_capture_window.attributes("-topmost", True)
+        message = ttk.Label(
+            self.keydown_key_capture_window,
+            text=f"키다운 키 {slot_index + 1}을 누르세요.",
+            padding=16
+        )
+        message.pack()
+
+        def on_key(event):
+            key_name = self.normalize_tk_key(event.keysym)
+            if key_name:
+                self.keydown_key_vars[slot_index].set(key_name)
+                self.keydown_key_capture_window.destroy()
+                self.keydown_key_capture_window = None
+
+        def on_close():
+            self.keydown_key_capture_window.destroy()
+            self.keydown_key_capture_window = None
+
+        self.keydown_key_capture_window.bind("<KeyPress>", on_key)
+        self.keydown_key_capture_window.protocol("WM_DELETE_WINDOW", on_close)
+        self.keydown_key_capture_window.focus_set()
+
+    def normalize_tk_key(self, keysym):
+        """Normalize tkinter key names for macOS."""
+        normalized = keysym.lower()
+        special_map = {
+            "space": "space",
+            "return": "enter",
+            "escape": "esc",
+            "backspace": "backspace",
+            "tab": "tab",
+            "delete": "delete",
+            # macOS specific mappings
+            "kp_delete": "delete",  # fn+delete on macOS
+            "help": "insert",  # Help key maps to Insert on some keyboards
+        }
+        return special_map.get(normalized, normalized)
+
+    def normalize_global_key(self, key):
+        """Normalize pynput key names for macOS."""
+        if isinstance(key, keyboard.KeyCode):
+            if key.char is None:
+                return None
+            return key.char.lower()
+        if isinstance(key, keyboard.Key):
+            key_name = key.name.lower()
+            modifier_map = {
+                "ctrl_l": "ctrl",
+                "ctrl_r": "ctrl",
+                "shift_l": "shift",
+                "shift_r": "shift",
+                "alt_l": "alt",
+                "alt_r": "alt",
+                "alt_gr": "alt",
+                # macOS: cmd key mappings
+                "cmd": "cmd",
+                "cmd_l": "cmd",
+                "cmd_r": "cmd",
+                # Also map to meta for compatibility
+                "meta_l": "cmd",
+                "meta_r": "cmd",
+            }
+            return modifier_map.get(key_name, key_name)
+        return None
+
+    def start_keyboard_listener(self):
+        if self.keyboard_listener is not None:
+            return
+        self.keyboard_listener = keyboard.Listener(
+            on_press=self.handle_global_key_press,
+            on_release=self.handle_global_key_release
+        )
+        self.keyboard_listener.daemon = True
+        self.keyboard_listener.start()
+
+    def handle_global_key_press(self, key):
+        key_name = self.normalize_global_key(key)
+        if not key_name:
+            return
+        self.pressed_keys.add(key_name)
+        self.root.after(0, self.update_overlay_keydown_status)
+        self.root.after(0, lambda: self.process_global_key_press(key_name))
+
+    def handle_global_key_release(self, key):
+        key_name = self.normalize_global_key(key)
+        if not key_name:
+            return
+        if key_name in self.pressed_keys:
+            self.pressed_keys.remove(key_name)
+        self.root.after(0, self.update_overlay_keydown_status)
+        self.root.after(0, self.reset_keydown_shortcut_state)
+
+    def process_global_key_press(self, key_name):
+        if key_name == "right":
+            self.reset_default_timer()
+        self.trigger_key_timer(key_name)
+        for slot_index in range(len(self.keydown_shortcut_vars)):
+            self.check_keydown_shortcut_toggle(slot_index)
+
+    def check_keydown_shortcut_toggle(self, slot_index):
+        shortcut_keys = self.parse_keydown_shortcut(slot_index)
+        if not shortcut_keys:
+            return
+        if all(key in self.pressed_keys for key in shortcut_keys):
+            if not self.keydown_shortcut_active[slot_index]:
+                self.keydown_shortcut_active[slot_index] = True
+                self.toggle_keydown_state(slot_index)
+
+    def reset_keydown_shortcut_state(self):
+        for slot_index in range(len(self.keydown_shortcut_vars)):
+            shortcut_keys = self.parse_keydown_shortcut(slot_index)
+            if not shortcut_keys:
+                self.keydown_shortcut_active[slot_index] = False
+                continue
+            if not all(key in self.pressed_keys for key in shortcut_keys):
+                self.keydown_shortcut_active[slot_index] = False
+
+    def add_key_timer(self):
+        key_name = self.timer_key_var.get().strip().lower()
+        if not key_name:
+            self.status_var.set("타이머 키를 입력하세요.")
+            return
+        try:
+            duration = int(self.timer_seconds_var.get())
+        except ValueError:
+            self.status_var.set("타이머 시간을 확인하세요.")
+            return
+        duration = max(1, duration)
+
+        timer = self.create_timer_row(key_name, duration)
+        self.key_timers.append(timer)
+        if self.overlay_enabled_var.get():
+            self.add_overlay_timer_row(timer)
+        self.timer_key_var.set("")
+        self.save_settings()
+
+    def create_timer_row(self, key_name, duration, locked=False):
+        row_frame = ttk.Frame(self.timer_list_frame)
+        row_frame.pack(fill="x", pady=4)
+
+        label = ttk.Label(row_frame, text=f"키: {key_name} ({duration}초)")
+        label.pack(side="left")
+
+        remaining_var = tk.StringVar(value=f"남은 시간: {duration}초")
+        remaining_label = ttk.Label(row_frame, textvariable=remaining_var)
+        remaining_label.pack(side="left", padx=12)
+
+        progress = ttk.Progressbar(row_frame, orient="horizontal", length=200, mode="determinate")
+        progress.pack(side="left", padx=8)
+        progress["maximum"] = duration
+        progress["value"] = duration
+
+        if not locked:
+            delete_button = ttk.Button(row_frame, text="삭제", command=lambda: self.remove_timer_row(timer))
+            delete_button.pack(side="right")
+
+        timer = {
+            "key": key_name,
+            "duration": duration,
+            "remaining": duration,
+            "job": None,
+            "frame": row_frame,
+            "remaining_var": remaining_var,
+            "progress": progress,
+            "overlay": None,
+            "locked": locked
+        }
+        return timer
+
+    def remove_timer_row(self, timer):
+        if timer["job"] is not None:
+            self.root.after_cancel(timer["job"])
+        self.remove_overlay_timer_row(timer)
+        timer["frame"].destroy()
+        self.key_timers = [item for item in self.key_timers if item is not timer]
+        self.save_settings()
+
+    def trigger_key_timer(self, key_name):
+        for timer in self.key_timers:
+            if timer["key"] == key_name:
+                self.start_timer(timer)
+
+    def initialize_default_timer(self):
+        if self.default_timer is not None:
+            return
+        timer = self.create_timer_row("키렉", 60, locked=True)
+        self.key_timers.append(timer)
+        self.default_timer = timer
+        self.start_timer(timer)
+
+    def reset_default_timer(self):
+        if self.default_timer is None:
+            return
+        self.start_timer(self.default_timer)
+
+    def start_timer(self, timer):
+        timer["remaining"] = timer["duration"]
+        timer["progress"]["maximum"] = timer["duration"]
+        timer["progress"]["value"] = timer["duration"]
+        timer["remaining_var"].set(f"남은 시간: {timer['remaining']}초")
+        self.update_overlay_timer(timer)
+        if timer["job"] is not None:
+            self.root.after_cancel(timer["job"])
+        timer["job"] = self.root.after(1000, lambda: self.tick_timer(timer))
+
+    def tick_timer(self, timer):
+        timer["remaining"] -= 1
+        if timer["remaining"] <= 0:
+            timer["remaining"] = 0
+            timer["progress"]["value"] = 0
+            timer["remaining_var"].set("남은 시간: 0초")
+            self.update_overlay_timer(timer)
+            timer["job"] = None
+            return
+        timer["progress"]["value"] = timer["remaining"]
+        timer["remaining_var"].set(f"남은 시간: {timer['remaining']}초")
+        self.update_overlay_timer(timer)
+        timer["job"] = self.root.after(1000, lambda: self.tick_timer(timer))
+
+    def toggle_timer_overlay(self):
+        if self.overlay_enabled_var.get():
+            self.open_timer_overlay()
+        else:
+            self.close_timer_overlay()
+        self.save_settings()
+
+    def open_timer_overlay(self):
+        if self.overlay_window is not None or self.overlay_bg_window is not None:
+            return
+
+        # macOS: Use a semi-transparent background window
+        self.overlay_bg_window = tk.Toplevel(self.root)
+        self.overlay_bg_window.title("타이머 오버레이 배경")
+        self.overlay_bg_window.attributes("-topmost", True)
+        self.overlay_bg_window.overrideredirect(True)
+        self.overlay_bg_window.configure(background="#000000")
+        self.overlay_bg_window.attributes("-alpha", 0.3)
+        self.overlay_bg_window.geometry("+20+20")
+
+        # Main overlay window with content
+        self.overlay_window = tk.Toplevel(self.root)
+        self.overlay_window.title("타이머 오버레이")
+        self.overlay_window.attributes("-topmost", True)
+        self.overlay_window.overrideredirect(True)
+        self.overlay_window.configure(background=self.overlay_bg_color)
+        self.overlay_window.attributes("-alpha", 0.85)
+        self.overlay_window.geometry("+20+20")
+
+        self.overlay_container = tk.Frame(
+            self.overlay_window,
+            bg=self.overlay_bg_color,
+            padx=8,
+            pady=8
+        )
+        self.overlay_container.pack(fill="both", expand=True)
+        self.bind_overlay_drag(self.overlay_window)
+        self.bind_overlay_drag(self.overlay_container)
+        self.bind_overlay_drag(self.overlay_bg_window)
+
+        for timer in self.key_timers:
+            self.add_overlay_timer_row(timer)
+        self.add_overlay_keydown_status_row()
+        self.sync_overlay_background()
+        self.overlay_bg_window.lower(self.overlay_window)
+
+    def close_timer_overlay(self):
+        if self.overlay_window is None and self.overlay_bg_window is None:
+            return
+        for timer in self.key_timers:
+            self.remove_overlay_timer_row(timer)
+        if self.overlay_keydown_frame is not None:
+            self.overlay_keydown_frame.destroy()
+            self.overlay_keydown_frame = None
+            self.overlay_keydown_rects = []
+        if self.overlay_window is not None:
+            self.overlay_window.destroy()
+            self.overlay_window = None
+        if self.overlay_bg_window is not None:
+            self.overlay_bg_window.destroy()
+            self.overlay_bg_window = None
+        self.overlay_container = None
+
+    def add_overlay_timer_row(self, timer):
+        if self.overlay_window is None or self.overlay_container is None:
+            return
+        if timer.get("overlay") is not None:
+            return
+
+        row_frame = tk.Frame(self.overlay_container, bg=self.overlay_bg_color)
+        if self.overlay_keydown_frame is not None:
+            row_frame.pack(fill="x", pady=4, before=self.overlay_keydown_frame)
+        else:
+            row_frame.pack(fill="x", pady=4)
+        row_frame.columnconfigure(1, weight=1)
+
+        max_seconds = 180
+        base_width = 100
+        duration_ratio = min(timer["duration"] / max_seconds, 1)
+        bar_width = max(1, int(base_width * duration_ratio))
+        bar_height = 20
+        canvas = tk.Canvas(
+            row_frame,
+            width=bar_width,
+            height=bar_height,
+            bg="#333333",
+            highlightthickness=0
+        )
+        canvas.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        bar_rect = canvas.create_rectangle(0, 0, bar_width, bar_height, fill="#4caf50", width=0)
+        text_item = canvas.create_text(
+            bar_width // 2,
+            bar_height // 2,
+            text=f"{timer['remaining']}",
+            fill="white"
+        )
+
+        key_label = tk.Label(
+            row_frame,
+            text=f"{timer['key']}",
+            bg=self.overlay_bg_color,
+            fg="white",
+            anchor="e"
+        )
+        key_label.grid(row=0, column=1, sticky="e")
+
+        self.bind_overlay_drag(row_frame)
+        self.bind_overlay_drag(canvas)
+        self.bind_overlay_drag(key_label)
+
+        timer["overlay"] = {
+            "frame": row_frame,
+            "canvas": canvas,
+            "rect": bar_rect,
+            "text": text_item,
+            "width": bar_width,
+            "height": bar_height
+        }
+        self.update_overlay_timer(timer)
+        self.sync_overlay_background()
+
+    def remove_overlay_timer_row(self, timer):
+        overlay = timer.get("overlay")
+        if overlay is None:
+            return
+        overlay["frame"].destroy()
+        timer["overlay"] = None
+        self.sync_overlay_background()
+
+    def update_overlay_timer(self, timer):
+        overlay = timer.get("overlay")
+        if overlay is None:
+            return
+        remaining = timer["remaining"]
+        max_seconds = 180
+        display_total = min(timer["duration"], max_seconds)
+        if display_total <= 0:
+            fill_width = 0
+        elif remaining >= display_total:
+            fill_width = overlay["width"]
+        else:
+            fill_width = int(overlay["width"] * max(0, remaining) / display_total)
+        overlay["canvas"].coords(overlay["rect"], 0, 0, fill_width, overlay["height"])
+        overlay["canvas"].itemconfig(overlay["text"], text=f"{remaining}")
+
+    def add_overlay_keydown_status_row(self):
+        if self.overlay_window is None or self.overlay_container is None:
+            return
+        if self.overlay_keydown_frame is not None:
+            return
+
+        frame = tk.Frame(self.overlay_container, bg=self.overlay_bg_color)
+        frame.pack(fill="x", pady=(6, 0))
+
+        indicator_size = 16
+        left_canvas = tk.Canvas(
+            frame,
+            width=indicator_size,
+            height=indicator_size,
+            bg=self.overlay_bg_color,
+            highlightthickness=0
+        )
+        left_canvas.pack(side="left")
+        left_rect = left_canvas.create_rectangle(
+            0,
+            0,
+            indicator_size,
+            indicator_size,
+            fill="#777777",
+            width=0
+        )
+
+        right_canvas = tk.Canvas(
+            frame,
+            width=indicator_size,
+            height=indicator_size,
+            bg=self.overlay_bg_color,
+            highlightthickness=0
+        )
+        right_canvas.pack(side="right")
+        right_rect = right_canvas.create_rectangle(
+            0,
+            0,
+            indicator_size,
+            indicator_size,
+            fill="#777777",
+            width=0
+        )
+
+        self.bind_overlay_drag(frame)
+        self.bind_overlay_drag(left_canvas)
+        self.bind_overlay_drag(right_canvas)
+
+        self.overlay_keydown_frame = frame
+        self.overlay_keydown_rects = [
+            (left_canvas, left_rect),
+            (right_canvas, right_rect)
+        ]
+        self.update_overlay_keydown_status()
+
+    def bind_overlay_drag(self, widget):
+        widget.bind("<ButtonPress-1>", self.on_overlay_drag_start, add="+")
+        widget.bind("<B1-Motion>", self.on_overlay_drag_motion, add="+")
+
+    def on_overlay_drag_start(self, event):
+        if self.overlay_window is None:
+            return
+        self.overlay_drag_offset["x"] = event.x_root - self.overlay_window.winfo_x()
+        self.overlay_drag_offset["y"] = event.y_root - self.overlay_window.winfo_y()
+
+    def on_overlay_drag_motion(self, event):
+        if self.overlay_window is None:
+            return
+        x = event.x_root - self.overlay_drag_offset["x"]
+        y = event.y_root - self.overlay_drag_offset["y"]
+        self.overlay_window.geometry(f"+{x}+{y}")
+        if self.overlay_bg_window is not None:
+            self.overlay_bg_window.geometry(f"+{x}+{y}")
+
+    def sync_overlay_background(self):
+        if self.overlay_window is None or self.overlay_bg_window is None:
+            return
+        self.overlay_window.update_idletasks()
+        self.overlay_bg_window.geometry(self.overlay_window.geometry())
+
+    def load_settings(self):
+        if not os.path.exists(self.settings_path):
+            return
+        with open(self.settings_path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+
+        self.warning_threshold_var.set(str(data.get("warning_threshold", self.warning_threshold_var.get())))
+        self.color_input_var.set(data.get("color_input", self.color_input_var.get()))
+        self.keydown_shortcut_vars[0].set(
+            data.get("keydown_shortcut_1", data.get("keydown_shortcut", self.keydown_shortcut_vars[0].get()))
+        )
+        self.keydown_key_vars[0].set(
+            data.get("keydown_key_1", data.get("keydown_key_primary", self.keydown_key_vars[0].get()))
+        )
+        self.keydown_shortcut_vars[1].set(
+            data.get("keydown_shortcut_2", self.keydown_shortcut_vars[1].get())
+        )
+        self.keydown_key_vars[1].set(
+            data.get("keydown_key_2", data.get("keydown_key_secondary", self.keydown_key_vars[1].get()))
+        )
+        fallback_reenable = str(data.get(
+            "keydown_warning_reenable",
+            self.keydown_warning_reenable_vars[0].get()
+        ))
+        self.keydown_warning_reenable_vars[0].set(str(
+            data.get("keydown_warning_reenable_1", fallback_reenable)
+        ))
+        self.keydown_warning_reenable_vars[1].set(str(
+            data.get("keydown_warning_reenable_2", fallback_reenable)
+        ))
+        timer_seconds = data.get("timer_seconds", self.timer_seconds_var.get())
+        self.timer_seconds_var.set(str(timer_seconds))
+        self.overlay_enabled_var.set(bool(data.get("overlay_enabled", self.overlay_enabled_var.get())))
+
+        region = data.get("region")
+        if region and len(region) == 4:
+            self.region = tuple(region)
+            self.status_var.set("선택된 영역에서 색상 픽셀 수를 측정 중입니다.")
+
+        color_hex = data.get("selected_color")
+        if color_hex:
+            color = self.parse_color_input(color_hex)
+            if color is not None:
+                self.selected_color = normalize_pixel(color)
+                self.color_var.set(f"선택된 색상: {color_hex.upper()}")
+                self.status_var.set("선택된 색상 픽셀 수를 측정 중입니다.")
+
+        timers = data.get("key_timers", [])
+        for timer in timers:
+            key_name = str(timer.get("key", "")).lower()
+            duration = int(timer.get("duration", 0))
+            if key_name and duration > 0:
+                self.key_timers.append(self.create_timer_row(key_name, duration))
+
+        if self.overlay_enabled_var.get():
+            self.open_timer_overlay()
+        if self.region is not None:
+            self.start_updates()
+
+    def save_settings(self):
+        settings = {
+            "region": list(self.region) if self.region else None,
+            "selected_color": self.color_var.get().replace("선택된 색상: ", "").strip()
+            if self.selected_color else None,
+            "color_input": self.color_input_var.get(),
+            "warning_threshold": self.warning_threshold_var.get(),
+            "keydown_shortcut_1": self.keydown_shortcut_vars[0].get(),
+            "keydown_key_1": self.keydown_key_vars[0].get(),
+            "keydown_shortcut_2": self.keydown_shortcut_vars[1].get(),
+            "keydown_key_2": self.keydown_key_vars[1].get(),
+            "keydown_warning_reenable_1": self.keydown_warning_reenable_vars[0].get(),
+            "keydown_warning_reenable_2": self.keydown_warning_reenable_vars[1].get(),
+            "timer_seconds": self.timer_seconds_var.get(),
+            "overlay_enabled": self.overlay_enabled_var.get(),
+            "key_timers": [
+                {"key": timer["key"], "duration": timer["duration"]}
+                for timer in self.key_timers
+                if not timer.get("locked")
+            ]
+        }
+        with open(self.settings_path, "w", encoding="utf-8") as file:
+            json.dump(settings, file, ensure_ascii=False, indent=2)
+
+    def on_close(self):
+        self.cancel_keydown_jobs()
+        if any(self.keydown_actives):
+            self.release_keydown_keys()
+        self.save_settings()
+        self.close_timer_overlay()
+        if self.keyboard_listener is not None:
+            self.keyboard_listener.stop()
+        self.root.destroy()
+
+    def update_warning_state(self, health_percent):
+        threshold = self.parse_warning_threshold()
+        if health_percent < threshold:
+            if self.warning_start_time is None:
+                self.warning_start_time = time.monotonic()
+                self.reset_default_timer()
+            elapsed = time.monotonic() - self.warning_start_time
+            elapsed = round(elapsed / 0.25) * 0.25
+            self.warning_state_var.set("경고 상태: 경고")
+            self.warning_duration_var.set(f"경고 지속시간: {elapsed:.2f}초")
+            self.warning_state_label.configure(style="Warning.TLabel")
+        else:
+            self.warning_start_time = None
+            self.warning_state_var.set("경고 상태: 정상")
+            self.warning_duration_var.set("경고 지속시간: 0.00초")
+            self.warning_state_label.configure(style="TLabel")
+        self.handle_keydown_warning_logic(health_percent)
+
+    def toggle_keydown_state(self, slot_index):
+        key_name = self.parse_keydown_key(slot_index)
+        if not key_name:
+            self.status_var.set(f"키다운 키 {slot_index + 1}을 입력하세요.")
+            return
+        if self.keydown_actives[slot_index]:
+            self.set_keydown_state(slot_index, False)
+            self.cancel_keydown_jobs()
+        else:
+            self.set_keydown_state(slot_index, True)
+            self.reset_keydown_warning_state()
+
+    def release_keydown_keys(self):
+        for slot_index in range(len(self.keydown_actives)):
+            if self.keydown_actives[slot_index]:
+                self.set_keydown_state(slot_index, False)
+
+    def cancel_keydown_jobs(self):
+        for index, job in enumerate(self.keydown_warning_jobs):
+            if job is not None:
+                self.root.after_cancel(job)
+                self.keydown_warning_jobs[index] = None
+        self.keydown_warning_restore = [False, False]
+
+    def handle_keydown_warning_logic(self, health_percent):
+        threshold = self.parse_warning_threshold()
+        if health_percent < threshold:
+            if not self.keydown_warning_triggered:
+                self.keydown_warning_triggered = True
+                self.trigger_keydown_warning_toggle()
+        else:
+            self.reset_keydown_warning_state()
+
+    def reset_keydown_warning_state(self):
+        self.keydown_warning_triggered = False
+
+    def set_keydown_state(self, slot_index, active):
+        key_name = self.parse_keydown_key(slot_index)
+        if active and not key_name:
+            self.keydown_actives[slot_index] = False
+            self.update_keydown_state_label()
+            self.update_overlay_keydown_status()
+            return
+        self.keydown_actives[slot_index] = active
+        if active:
+            pyautogui.keyDown(key_name)
+        elif key_name:
+            pyautogui.keyUp(key_name)
+        self.update_keydown_state_label()
+        self.update_overlay_keydown_status()
+
+    def trigger_keydown_warning_toggle(self):
+        if any(job is not None for job in self.keydown_warning_jobs):
+            return
+        self.keydown_warning_restore = [False, False]
+        for slot_index, active in enumerate(self.keydown_actives):
+            delay = self.parse_keydown_warning_reenable(slot_index)
+            if delay <= 0:
+                continue
+            restore_after_delay = active and delay > 0
+            self.keydown_warning_restore[slot_index] = restore_after_delay
+            if active:
+                self.set_keydown_state(slot_index, False)
+            if restore_after_delay:
+                self.keydown_warning_jobs[slot_index] = self.root.after(
+                    int(delay * 1000),
+                    lambda index=slot_index: self.finish_keydown_warning_toggle(index)
+                )
+
+    def finish_keydown_warning_toggle(self, slot_index):
+        self.keydown_warning_jobs[slot_index] = None
+        if self.keydown_warning_restore[slot_index] and not self.keydown_actives[slot_index]:
+            self.set_keydown_state(slot_index, True)
+        self.keydown_warning_restore[slot_index] = False
+
+    def start_updates(self):
+        if self.update_job is not None:
+            self.root.after_cancel(self.update_job)
+        self.update_job = self.root.after(100, self.update_ratio)
+
+    def update_health_display(self):
+        health_percent = (100 / 82) * ((self.hp_pixels / 2) + 3)
+        rounded_percent = int(health_percent + 0.5)
+        self.update_warning_state(rounded_percent)
+
+    def update_ratio(self):
+        if self.region is None:
+            self.update_job = self.root.after(100, self.update_ratio)
+            return
+
+        image = ImageGrab.grab(bbox=self.region)
+        if self.selected_color is None:
+            self.hp_pixels = 0
+            self.hp_pixel_var.set("hp픽셀: 0")
+            self.update_health_display()
+            self.update_job = self.root.after(100, self.update_ratio)
+            return
+
+        # Optimize: Use numpy for faster pixel counting
+        img_array = np.array(image)
+        target = np.array(self.selected_color)
+
+        # Check if the image has an alpha channel (RGBA) or not (RGB)
+        # We only care about the first 3 channels (RGB)
+        if img_array.shape[2] >= 3:
+            # Create a boolean mask where pixels match the target color
+            mask = np.all(img_array[:, :, :3] == target, axis=2)
+            match_count = np.count_nonzero(mask)
+        else:
+            match_count = 0
+
+        self.hp_pixels = match_count
+        self.hp_pixel_var.set(f"hp픽셀: {match_count}")
+        self.update_health_display()
+        self.update_job = self.root.after(100, self.update_ratio)
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = RegionRatioApp(root)
+    root.mainloop()
